@@ -1,6 +1,7 @@
 """
 data_engine.py
 Accepts either a file path string OR a BytesIO object (Streamlit Cloud uploads).
+Auto-detects header row (row 1 or row 2) and CAR effectiveness column name.
 """
 
 import io
@@ -24,8 +25,15 @@ SKIP_LOCS = ['A&B Labs', 'VOIDED', 'Extras', 'Warehouse', 'Additives',
              'Utah', 'Cameron', 'Specialty', 'Kenner', 'Santurce', 'Boucherville']
 
 
+def _read_source(source, sheet_name, header=0):
+    """Read excel, seeking BytesIO to 0 first."""
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
+    return pd.read_excel(source, sheet_name=sheet_name, header=header)
+
+
 def load_and_compute(file_source) -> dict:
-    # Normalise to a source pd.read_excel can handle
+    # Normalise source
     if isinstance(file_source, (str, Path)):
         source      = str(file_source)
         source_name = Path(file_source).name
@@ -34,52 +42,96 @@ def load_and_compute(file_source) -> dict:
         source      = io.BytesIO(file_source.read())
         source_name = "uploaded file"
 
-    # Read all sheets at once
-    if isinstance(source, io.BytesIO):
-        source.seek(0)
-    sheets  = pd.read_excel(source, sheet_name=['List source', 'Data - CARs', 'Open data - PTOs'])
-    ls      = sheets['List source']
-    car_raw = sheets['Data - CARs']
-    pto_raw = sheets['Open data - PTOs']
+    # ── List source (always header=0) ─────────────────────────────
+    ls = _read_source(source, 'List source', header=0)
 
-    # Master location list
+    # ── Auto-detect header row for CARs/PTOs ──────────────────────
+    # Try header=0 first; if 'Location \n(drop-down)' not found, use header=1
+    car_raw = _read_source(source, 'Data - CARs', header=0)
+    car_raw.columns = car_raw.columns.str.strip()
+    if 'Location \n(drop-down)' not in car_raw.columns:
+        car_raw = _read_source(source, 'Data - CARs', header=1)
+        car_raw.columns = car_raw.columns.str.strip()
+
+    pto_raw = _read_source(source, 'Open data - PTOs', header=0)
+    pto_raw.columns = pto_raw.columns.str.strip()
+    if 'Location \n(drop-down)' not in pto_raw.columns:
+        pto_raw = _read_source(source, 'Open data - PTOs', header=1)
+        pto_raw.columns = pto_raw.columns.str.strip()
+
+    # ── Auto-detect CAR effectiveness column name ─────────────────
+    car_eff_cols = [c for c in car_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()]
+    if not car_eff_cols:
+        raise ValueError(f"Cannot find effectiveness column in CARs sheet. Columns: {car_raw.columns.tolist()}")
+    car_eff_col = car_eff_cols[0]
+
+    pto_eff_cols = [c for c in pto_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()]
+    if not pto_eff_cols:
+        raise ValueError(f"Cannot find effectiveness column in PTOs sheet. Columns: {pto_raw.columns.tolist()}")
+    pto_eff_col = pto_eff_cols[0]
+
+    # ── Auto-detect date range from data ──────────────────────────
+    car_raw['_init'] = pd.to_datetime(car_raw['CAR initialized date'], errors='coerce')
+    pto_raw['_init'] = pd.to_datetime(pto_raw['PTO initialized date'], errors='coerce')
+    all_dates = pd.concat([car_raw['_init'].dropna(), pto_raw['_init'].dropna()])
+    data_start = all_dates.min().to_period('M')
+    # End: use close dates to find latest activity
+    car_raw['_close'] = pd.to_datetime(car_raw[car_eff_col], errors='coerce')
+    pto_raw['_close'] = pd.to_datetime(pto_raw[pto_eff_col], errors='coerce')
+    all_close = pd.concat([car_raw['_close'].dropna(), pto_raw['_close'].dropna()])
+    data_end = all_close.max().to_period('M')
+
+    months       = pd.period_range(data_start, data_end, freq='M')
+    month_labels = [m.strftime('%b %Y') for m in months]
+    NM           = len(months)
+
+    # Year-end indices
+    year_end_indices = {}
+    for i, m in enumerate(months):
+        if m.month == 12:
+            year_end_indices[m.year] = i
+    # Use last December in data as primary KPI reference
+    last_dec_year = max(year_end_indices.keys()) if year_end_indices else None
+    last_dec_idx  = year_end_indices.get(last_dec_year, NM - 1)
+    prev_dec_year = last_dec_year - 1 if last_dec_year else None
+    prev_dec_idx  = year_end_indices.get(prev_dec_year, None)
+
+    # ── Master location list ──────────────────────────────────────
     ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
     ls['Location'] = ls['Location'].str.strip()
     ls['Area']     = ls['Area'].str.strip()
     ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
     ls = ls[ls['Area'] != 'VOID']
-
-    region_map = {}
+    region_map    = {}
     for _, row in ls.iterrows():
         region_map.setdefault(row['Area'], []).append(row['Location'])
     all_locations = sorted(ls['Location'].unique().tolist())
 
-    months       = pd.period_range('2025-01', '2026-02', freq='M')
-    month_labels = [m.strftime('%b %Y') for m in months]
-    NM           = len(months)
-    DEC2025_IDX  = month_labels.index('Dec 2025')
-
-    # Prep CARs
+    # ── Prep CARs ─────────────────────────────────────────────────
     car = car_raw.copy()
-    car['loc']        = car['Location \n(drop-down)'].str.strip()
-    car['init_date']  = pd.to_datetime(car['CAR initialized date'])
-    car['close_date'] = pd.to_datetime(car['Effectiveness Review & date deemed effective'])
-    car['days2close'] = car['Days to close']
-    car_closed = car[car['Status'] == 'CLOSED'].copy()
-    car_open   = car[car['Status'] == 'OPEN'].copy()
+    car['loc']        = car['Location \n(drop-down)'].astype(str).str.strip()
+    car['init_date']  = pd.to_datetime(car['CAR initialized date'], errors='coerce')
+    car['close_date'] = pd.to_datetime(car[car_eff_col], errors='coerce')
+    car['days2close'] = pd.to_numeric(car['Days to close'], errors='coerce')
+    car['status']     = car['Status'].astype(str).str.strip()
+    car = car[car['init_date'].notna() & (car['loc'] != 'nan')]
+    car_closed = car[car['status'] == 'CLOSED'].copy()
+    car_open   = car[car['status'] == 'OPEN'].copy()
     car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
 
-    # Prep PTOs
+    # ── Prep PTOs ─────────────────────────────────────────────────
     pto = pto_raw.copy()
-    pto['loc']        = pto['Location \n(drop-down)'].str.strip()
-    pto['init_date']  = pd.to_datetime(pto['PTO initialized date'])
-    pto['close_date'] = pd.to_datetime(pto['Effectiveness Review & date deemed effective'], errors='coerce')
+    pto['loc']        = pto['Location \n(drop-down)'].astype(str).str.strip()
+    pto['init_date']  = pd.to_datetime(pto['PTO initialized date'], errors='coerce')
+    pto['close_date'] = pd.to_datetime(pto[pto_eff_col], errors='coerce')
     pto['is_closed']  = pto['close_date'].notna()
     pto['days2close'] = (pto['close_date'] - pto['init_date']).dt.days
+    pto = pto[pto['init_date'].notna() & (pto['loc'] != 'nan')]
     pto_closed = pto[pto['is_closed']].copy()
     pto_open   = pto[~pto['is_closed']].copy()
     pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
 
+    # ── Filter helper ─────────────────────────────────────────────
     def filter_df(df, loc_key):
         if loc_key == 'ALL':
             return df
@@ -87,6 +139,7 @@ def load_and_compute(file_source) -> dict:
             return df[df['loc'].isin(region_map.get(loc_key[7:], []))]
         return df[df['loc'] == loc_key]
 
+    # ── Core metric calc ──────────────────────────────────────────
     def calc(closed_df, open_df, loc_key):
         c = filter_df(closed_df, loc_key)
         o = filter_df(open_df,   loc_key)
@@ -127,6 +180,7 @@ def load_and_compute(file_source) -> dict:
             result.append(int(round(cum_days / cum_cls)) if cum_cls > 0 else 0)
         return result
 
+    # ── Build all keys ────────────────────────────────────────────
     region_keys = [f'REGION:{r}' for r in REGION_ORDER if r in region_map]
     all_keys    = ['ALL'] + region_keys + all_locations
 
@@ -138,6 +192,7 @@ def load_and_compute(file_source) -> dict:
     pto_wavg = {k: running_wavg(pto_metrics[k]) for k in all_keys}
     cmb_wavg = {k: running_wavg(cmb_metrics[k]) for k in all_keys}
 
+    # ── Per-location stats ────────────────────────────────────────
     last_idx = NM - 1
 
     def build_stats(metrics, wavg):
@@ -145,11 +200,11 @@ def load_and_compute(file_source) -> dict:
         for loc in all_locations:
             d = metrics[loc]
             stats[loc] = {
-                'last_ov':      d[last_idx]['ov90'],
-                'avg_ov':       int(round(sum(r['ov90'] for r in d) / NM)),
-                'total_closed': sum(r['closed'] for r in d),
-                'ye2025_wavg':  wavg[loc][DEC2025_IDX],
-                'ytd2026_wavg': wavg[loc][-1],
+                'last_ov':       d[last_idx]['ov90'],
+                'avg_ov':        int(round(sum(r['ov90'] for r in d) / NM)),
+                'total_closed':  sum(r['closed'] for r in d),
+                'last_dec_wavg': wavg[loc][last_dec_idx],
+                'prev_dec_wavg': wavg[loc][prev_dec_idx] if prev_dec_idx is not None else 0,
             }
         return stats
 
@@ -188,7 +243,11 @@ def load_and_compute(file_source) -> dict:
         'pto_top20':     top20(pto_stats),
         'cmb_top20':     top20(cmb_stats),
         'month_labels':  month_labels,
-        'DEC2025_IDX':   DEC2025_IDX,
+        'last_dec_idx':  last_dec_idx,
+        'last_dec_year': last_dec_year,
+        'prev_dec_idx':  prev_dec_idx,
+        'prev_dec_year': prev_dec_year,
+        'year_end_indices': year_end_indices,
         'all_locations': all_locations,
         'region_map':    region_map,
         'region_order':  REGION_ORDER,
