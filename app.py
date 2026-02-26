@@ -163,7 +163,13 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     avg_list    = [r['avg_days'] for r in metrics if r['closed'] > 0]
     ov_list     = [r['ov90']     for r in metrics]
 
-    DEC = D['DEC2025_IDX']
+    DEC = D['last_dec_idx']
+    ye_label = f"{D['last_dec_year']} YE"
+    last_month = D['month_labels'][-1]
+    prev_month = D['month_labels'][-2] if len(D['month_labels']) > 1 else D['month_labels'][-1]
+    DEC_YR = D['last_dec_year']
+    PREV_DEC = D['prev_dec_idx']
+    ye_label = f"{D['last_dec_year']} YE"
 
     # Full period (all months)
     total_closed  = sum(closed_list)
@@ -179,8 +185,8 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     ye_avg_ov90   = int(round(np.mean([r['ov90'] for r in metrics[:DEC+1]])))
 
     # Weighted avg
-    ye2025  = wavg_vals[DEC]
-    ytd2026 = wavg_vals[-1]
+    ye_wavg  = wavg_vals[DEC]
+    cur_wavg = wavg_vals[-1]
 
     trend       = '▲ Worse'   if last_ov > prev_ov else ('▼ Improved' if last_ov < prev_ov else '→ Flat')
     trend_color = '#ef4444'   if '▲' in trend else ('#22c55e' if '▼' in trend else '#6b7c93')
@@ -193,7 +199,7 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
       <div class="lbl">{lbl}</div>
       <div class="sub">{sub}</div>
       <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid #eee">
-        <span style="font-size:0.68rem;color:#8899aa;text-transform:uppercase;letter-spacing:0.06em">2025 YE &nbsp;</span>
+        <span style="font-size:0.68rem;color:#8899aa;text-transform:uppercase;letter-spacing:0.06em">{ye_label} &nbsp;</span>
         <span style="font-size:0.95rem;font-weight:700;color:{ye_color}">{ye_val}</span>
       </div>
     </div>"""
@@ -221,18 +227,18 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     with c4:
         st.markdown(card.format(
             border=trend_color, val_color=trend_color, val_size='1.3rem',
-            val=trend, lbl="Feb vs Jan 2026", sub="Open ≥90 trend",
+            val=trend, lbl=f"{last_month} vs {prev_month}", sub="Open ≥90 trend",
             ye_color=ye_trend_color, ye_val=f"Dec ov90: {ye_last_ov}"
         ), unsafe_allow_html=True)
     with c5:
         st.markdown(f"""
         <div class="metric-card" style="border-color:{colors['wavg']};height:100%">
-          <div class="val" style="color:{colors['primary']};font-size:1.9rem">{ytd2026}</div>
+          <div class="val" style="color:{colors['primary']};font-size:1.9rem">{cur_wavg}</div>
           <div class="lbl">Wtd Avg Days Closed</div>
-          <div class="sub">2026 YTD running avg</div>
+          <div class="sub">{last_month} YTD running avg</div>
           <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid #eee">
-            <span style="font-size:0.68rem;color:#8899aa;text-transform:uppercase;letter-spacing:0.06em">2025 YE &nbsp;</span>
-            <span style="font-size:0.95rem;font-weight:700;color:{colors['primary']}">{ye2025}</span>
+            <span style="font-size:0.68rem;color:#8899aa;text-transform:uppercase;letter-spacing:0.06em">{ye_label} &nbsp;</span>
+            <span style="font-size:0.95rem;font-weight:700;color:{colors['primary']}">{ye_wavg}</span>
           </div>
         </div>""", unsafe_allow_html=True)
 
