@@ -444,14 +444,20 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
         hovertemplate="<b>%{x}</b><br>Wtd Avg: %{y:.0f}<extra></extra>"),
         secondary_y=True)
 
-    # Year boundary lines within the slice
+    # Year boundary lines within the slice (use numeric index for categorical x-axis)
     for yr_idx, yr_label in [(i, all_months[i][:4])
                               for i, m in enumerate(all_months)
                               if m.startswith('Jan') and start_idx < i <= end_idx]:
-        fig.add_vline(x=all_months[yr_idx], line_dash='dot',
-                      line_color='rgba(239,68,68,0.4)', line_width=1.5,
-                      annotation_text=yr_label, annotation_position='top right',
-                      annotation_font_size=9, annotation_font_color='#ef4444')
+        slice_pos = yr_idx - start_idx - 0.5  # position within sliced x-axis
+        if 0 <= slice_pos <= len(slice_months):
+            fig.add_shape(type='line',
+                          x0=slice_pos, x1=slice_pos, y0=0, y1=1,
+                          xref='x', yref='paper',
+                          line=dict(dash='dot', color='rgba(239,68,68,0.5)', width=1.5))
+            fig.add_annotation(x=slice_pos, y=1, xref='x', yref='paper',
+                               text=yr_label, showarrow=False,
+                               font=dict(size=9, color='#ef4444'),
+                               xanchor='left', yanchor='bottom')
 
     fig.update_layout(
         title=dict(text=title, font=dict(size=12, color='#0d1117'), x=0, y=0.97),
