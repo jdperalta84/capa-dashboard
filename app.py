@@ -63,9 +63,9 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="section-hdr">Data Source</div>', unsafe_allow_html=True)
-    default_path = "/mnt/user-data/CAPA-PTOs_still_open_by_month_as_of_02_23_2026.xlsx"
-    file_path = st.text_input("Excel file path", value=default_path, label_visibility="collapsed")
-    load_btn  = st.button("⟳  Load / Refresh Data", use_container_width=True)
+    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"],
+                                     label_visibility="collapsed")
+    load_btn = st.button("⟳  Reload", use_container_width=True)
 
     st.markdown('<div class="section-hdr">Region Filter</div>', unsafe_allow_html=True)
     region_placeholder = st.empty()
@@ -82,26 +82,31 @@ with st.sidebar:
 
 # ── Load data ─────────────────────────────────────────────────────
 @st.cache_data(show_spinner="Computing metrics…")
-def get_data(path):
-    return load_and_compute(path)
+def get_data(file_bytes):
+    import io
+    return load_and_compute(io.BytesIO(file_bytes))
 
-if "data" not in st.session_state or load_btn:
-    p = Path(file_path)
-    if p.exists():
+if uploaded_file is not None:
+    file_bytes = uploaded_file.read()
+    file_hash  = hash(file_bytes)
+    if "data" not in st.session_state or st.session_state.get("file_hash") != file_hash or load_btn:
         try:
             get_data.clear()
-            st.session_state.data = get_data(str(p))
+            st.session_state.data      = get_data(file_bytes)
+            st.session_state.file_hash = file_hash
+            st.session_state.filename  = uploaded_file.name
         except Exception as e:
             st.error(f"Error loading file: {e}")
             st.stop()
-    else:
-        st.warning(f"File not found: `{file_path}`\n\nUpdate the path in the sidebar.")
-        st.stop()
+elif "data" not in st.session_state:
+    st.info("👆 Upload your Excel file in the sidebar to get started.")
+    st.stop()
 
 D = st.session_state.data
 
 with loaded_at_placeholder:
-    st.markdown(f'<div style="font-size:0.68rem;color:#2d4a6a">Loaded: {D["loaded_at"]}</div>',
+    fname = st.session_state.get("filename", "")
+    st.markdown(f'<div style="font-size:0.68rem;color:#2d4a6a">Loaded: {D["loaded_at"]}<br>{fname}</div>',
                 unsafe_allow_html=True)
 
 # ── Region + Location filters ─────────────────────────────────────
