@@ -163,52 +163,78 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     avg_list    = [r['avg_days'] for r in metrics if r['closed'] > 0]
     ov_list     = [r['ov90']     for r in metrics]
 
-    total_closed = sum(closed_list)
-    avg_days_val = int(round(np.mean(avg_list))) if avg_list else 0
-    avg_ov90     = int(round(np.mean(ov_list)))
-    last_ov      = ov_list[-1]
-    prev_ov      = ov_list[-2]
-    ye2025       = wavg_vals[D['DEC2025_IDX']]
-    ytd2026      = wavg_vals[-1]
+    DEC = D['DEC2025_IDX']
 
-    trend       = '▲ Worse' if last_ov > prev_ov else ('▼ Improved' if last_ov < prev_ov else '→ Flat')
-    trend_color = '#ef4444' if '▲' in trend else ('#22c55e' if '▼' in trend else '#6b7c93')
+    # Full period (all months)
+    total_closed  = sum(closed_list)
+    avg_days_val  = int(round(np.mean(avg_list))) if avg_list else 0
+    avg_ov90      = int(round(np.mean(ov_list)))
+    last_ov       = ov_list[-1]
+    prev_ov       = ov_list[-2]
+
+    # 2025 YE values (through Dec 2025, index 0-11)
+    ye_closed     = sum(r['closed']   for r in metrics[:DEC+1])
+    ye_avg_list   = [r['avg_days']    for r in metrics[:DEC+1] if r['closed'] > 0]
+    ye_avg_days   = int(round(np.mean(ye_avg_list))) if ye_avg_list else 0
+    ye_avg_ov90   = int(round(np.mean([r['ov90'] for r in metrics[:DEC+1]])))
+
+    # Weighted avg
+    ye2025  = wavg_vals[DEC]
+    ytd2026 = wavg_vals[-1]
+
+    trend       = '▲ Worse'   if last_ov > prev_ov else ('▼ Improved' if last_ov < prev_ov else '→ Flat')
+    trend_color = '#ef4444'   if '▲' in trend else ('#22c55e' if '▼' in trend else '#6b7c93')
+    ye_last_ov  = ov_list[DEC]
+    ye_trend_color = ov_color(ye_last_ov, t_hi, t_lo)[0]
+
+    card = """
+    <div class="metric-card" style="border-color:{border};height:100%">
+      <div class="val" style="color:{val_color};font-size:{val_size}">{val}</div>
+      <div class="lbl">{lbl}</div>
+      <div class="sub">{sub}</div>
+      <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid #eee">
+        <span style="font-size:0.68rem;color:#8899aa;text-transform:uppercase;letter-spacing:0.06em">2025 YE &nbsp;</span>
+        <span style="font-size:0.95rem;font-weight:700;color:{ye_color}">{ye_val}</span>
+      </div>
+    </div>"""
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.markdown(f"""<div class="metric-card" style="border-color:{colors['primary']}">
-            <div class="val" style="color:{colors['primary']}">{total_closed:,}</div>
-            <div class="lbl">{closed_label}</div>
-            <div class="sub">Full period total</div></div>""", unsafe_allow_html=True)
+        st.markdown(card.format(
+            border=colors['primary'], val_color=colors['primary'], val_size='1.9rem',
+            val=f"{total_closed:,}", lbl=closed_label, sub="Full period total",
+            ye_color=colors['primary'], ye_val=f"{ye_closed:,}"
+        ), unsafe_allow_html=True)
     with c2:
-        st.markdown(f"""<div class="metric-card" style="border-color:#64748b">
-            <div class="val" style="color:#1a202c">{avg_days_val}</div>
-            <div class="lbl">Avg Days to Close</div>
-            <div class="sub">Simple monthly avg</div></div>""", unsafe_allow_html=True)
+        st.markdown(card.format(
+            border='#64748b', val_color='#1a202c', val_size='1.9rem',
+            val=avg_days_val, lbl="Avg Days to Close", sub="Simple monthly avg",
+            ye_color='#64748b', ye_val=ye_avg_days
+        ), unsafe_allow_html=True)
     with c3:
-        bg, fg = ov_color(avg_ov90, t_hi, t_lo)
-        st.markdown(f"""<div class="metric-card" style="border-color:{bg}">
-            <div class="val" style="color:{bg}">{avg_ov90}</div>
-            <div class="lbl">Avg Open ≥90 Days</div>
-            <div class="sub">Monthly average</div></div>""", unsafe_allow_html=True)
+        bg, _ = ov_color(avg_ov90, t_hi, t_lo)
+        st.markdown(card.format(
+            border=bg, val_color=bg, val_size='1.9rem',
+            val=avg_ov90, lbl="Avg Open ≥90 Days", sub="Monthly average",
+            ye_color=ye_trend_color, ye_val=ye_avg_ov90
+        ), unsafe_allow_html=True)
     with c4:
-        st.markdown(f"""<div class="metric-card" style="border-color:{trend_color}">
-            <div class="val" style="color:{trend_color};font-size:1.3rem">{trend}</div>
-            <div class="lbl">Feb vs Jan 2026</div>
-            <div class="sub">Open ≥90 trend</div></div>""", unsafe_allow_html=True)
+        st.markdown(card.format(
+            border=trend_color, val_color=trend_color, val_size='1.3rem',
+            val=trend, lbl="Feb vs Jan 2026", sub="Open ≥90 trend",
+            ye_color=ye_trend_color, ye_val=f"Dec ov90: {ye_last_ov}"
+        ), unsafe_allow_html=True)
     with c5:
-        st.markdown(f"""<div class="metric-card" style="border-color:{colors['wavg']}">
-            <div class="wavg-box">
-              <div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.08em;color:#6b7c93">Wtd Avg Days Closed</div>
-              <div style="margin-top:0.4rem">
-                <span style="font-size:0.72rem;color:#6b7c93">2025 YE KPI &nbsp;</span>
-                <span class="yr" style="color:{colors['primary']}">{ye2025}</span>
-              </div>
-              <div style="margin-top:0.2rem">
-                <span style="font-size:0.72rem;color:#6b7c93">2026 YTD &nbsp;&nbsp;&nbsp;&nbsp;</span>
-                <span class="yr" style="color:{colors['wavg']}">{ytd2026}</span>
-              </div>
-            </div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="metric-card" style="border-color:{colors['wavg']};height:100%">
+          <div class="val" style="color:{colors['primary']};font-size:1.9rem">{ytd2026}</div>
+          <div class="lbl">Wtd Avg Days Closed</div>
+          <div class="sub">2026 YTD running avg</div>
+          <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid #eee">
+            <span style="font-size:0.68rem;color:#8899aa;text-transform:uppercase;letter-spacing:0.06em">2025 YE &nbsp;</span>
+            <span style="font-size:0.95rem;font-weight:700;color:{colors['primary']}">{ye2025}</span>
+          </div>
+        </div>""", unsafe_allow_html=True)
 
 # ── Chart ─────────────────────────────────────────────────────────
 def build_chart(months, metrics, wavg_vals, colors, title, show_car_pto_split=False):
