@@ -27,28 +27,39 @@ SKIP_LOCS = ['A&B Labs', 'VOIDED', 'Extras', 'Warehouse', 'Additives',
              'Utah', 'Cameron', 'Specialty', 'Kenner', 'Santurce', 'Boucherville']
 
 
-def load_and_compute(file_path: str) -> dict:
-    path = Path(file_path)
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
+def load_and_compute(file_source) -> dict:
+    """Accept either a file path string or a BytesIO object."""
+    import io as _io
+    if isinstance(file_source, (str, Path)):
+        path = Path(file_source)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_source}")
+        source = str(path)
+        source_name = path.name
+    else:
+        # BytesIO from file uploader — read into buffer
+        file_source.seek(0)
+        source = _io.BytesIO(file_source.read())
+        source_name = "uploaded file"
 
     # ── Master location list from List source ─────────────────────
-    ls = pd.read_excel(file_path, sheet_name='List source')
+    if isinstance(source, _io.BytesIO): source.seek(0)
+    ls = pd.read_excel(source, sheet_name='List source')
+    if isinstance(source, _io.BytesIO): source.seek(0)
+    car_raw = pd.read_excel(source, sheet_name='Data - CARs')
+    if isinstance(source, _io.BytesIO): source.seek(0)
+    pto_raw = pd.read_excel(source, sheet_name='Open data - PTOs')
+
+    # ── Process master location list ─────────────────────────────
     ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
     ls['Location'] = ls['Location'].str.strip()
     ls['Area']     = ls['Area'].str.strip()
     ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
     ls = ls[ls['Area'] != 'VOID']
-
-    region_map = {}
+    region_map    = {}
     for _, row in ls.iterrows():
         region_map.setdefault(row['Area'], []).append(row['Location'])
-
     all_locations = sorted(ls['Location'].unique().tolist())
-
-    # ── Raw data ──────────────────────────────────────────────────
-    car_raw = pd.read_excel(file_path, sheet_name='Data - CARs')
-    pto_raw = pd.read_excel(file_path, sheet_name='Open data - PTOs')
 
     months       = pd.period_range('2025-01', '2026-02', freq='M')
     month_labels = [m.strftime('%b %Y') for m in months]
