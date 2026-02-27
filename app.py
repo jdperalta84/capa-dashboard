@@ -7,7 +7,7 @@ from datetime import datetime
 import io
 
 from data_engine import load_and_compute, REGION_ORDER, REGION_COLORS
-from export_utils import export_excel
+from export_utils import export_excel, export_regional_summary
 
 st.set_page_config(page_title="CAPA · PTO Dashboard", page_icon="📋",
                    layout="wide", initial_sidebar_state="expanded")
@@ -198,7 +198,8 @@ with st.sidebar:
     date_end_ph   = st.empty()
 
     st.markdown('<div class="sidebar-section">Export</div>', unsafe_allow_html=True)
-    export_btn = st.button("↓  Export to Excel", use_container_width=True)
+    export_btn     = st.button("↓  Monthly Detail (Excel)", use_container_width=True)
+    export_reg_btn = st.button("↓  Regional Summary (Excel)", use_container_width=True)
     st.markdown("""
     <div style="font-size:0.65rem;color:#484f58;margin-top:0.3rem;line-height:1.5">
       PDF: browser Print → Save as PDF
@@ -352,10 +353,15 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     full_w  = get_full('car_wavg'    if closed_label == 'CARs Closed'
                        else ('pto_wavg'    if closed_label == 'PTOs Closed'
                              else 'cmb_wavg'))
-    ye_closed   = sum(r['closed']   for r in full_m[:last_dec_idx_full + 1])
-    ye_avg_list = [r['avg_days']   for r in full_m[:last_dec_idx_full + 1] if r['closed'] > 0]
+    # YE calc: only the 12 months of last_dec_year (not everything up to Dec)
+    all_months_full = D['month_labels']
+    ye_start_idx = next((i for i, m in enumerate(all_months_full)
+                         if m.endswith(str(last_dec_yr))), last_dec_idx_full - 11)
+    ye_slice     = full_m[ye_start_idx:last_dec_idx_full + 1]
+    ye_closed   = sum(r['closed']   for r in ye_slice)
+    ye_avg_list = [r['avg_days']   for r in ye_slice if r['closed'] > 0]
     ye_avg_days = int(round(np.mean(ye_avg_list))) if ye_avg_list else 0
-    ye_avg_ov90 = int(round(np.mean([r['ov90'] for r in full_m[:last_dec_idx_full + 1]])))
+    ye_avg_ov90 = int(round(np.mean([r['ov90'] for r in ye_slice])))
     ye_last_ov  = full_m[last_dec_idx_full]['ov90']
     ye_wavg     = full_w[last_dec_idx_full]
 
@@ -554,11 +560,11 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
 
     for i, item in enumerate(top20_data, 1):
         bg, fg  = ov_color(item['last_ov'], t_hi, t_lo)
-        medal   = ['🥇', '🥈', '🥉'][i - 1] if i <= 3 else f'<span style="color:#8b949e">{i}</span>'
+        rank    = f'<span style="color:#8b949e;font-size:0.8rem">{i}</span>'
         row_bg  = 'background:#fafbfc;' if i % 2 == 0 else ''
         dcols   = st.columns(widths)
         dcols[0].markdown(
-            f"<div style='font-size:0.8rem;padding:5px 0;{row_bg}'>{medal}</div>",
+            f"<div style='font-size:0.8rem;padding:5px 0;{row_bg}'>{rank}</div>",
             unsafe_allow_html=True)
         dcols[1].markdown(
             f"<div style='font-size:0.8rem;padding:5px 0;font-weight:500;color:#0d1117;{row_bg}'>"
@@ -657,8 +663,26 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
                      height=min(380, 36 + len(slice_months) * 35))
 
     st.markdown('<div style="margin-top:1rem"></div>', unsafe_allow_html=True)
-    sec = secondary_cols_fn() if secondary_cols_fn else None
-    top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=sec)
+
+    # Build Top 20 dynamically from selected region/location
+    stats_key = (metrics_key.replace('_metrics', '_stats'))
+    stats     = D[stats_key]
+    # Get locations in scope for current filter
+    if data_key == 'ALL':
+        scope_locs = D['all_locations']
+    elif data_key.startswith('REGION:'):
+        region = data_key[7:]
+        scope_locs = [l for l in D['all_locations']
+                      if l in D['region_map'].get(region, [])]
+    else:
+        scope_locs = [data_key] if data_key in stats else []
+    ranked = sorted(scope_locs, key=lambda l: stats[l]['last_ov'], reverse=True)[:20]
+    dynamic_top20 = [{'loc': l, 'last_ov': stats[l]['last_ov'],
+                      'avg_ov': stats[l]['avg_ov'],
+                      'total_closed': stats[l]['total_closed']} for l in ranked]
+
+    sec = secondary_cols_fn(dynamic_top20) if secondary_cols_fn else None
+    top20_table(dynamic_top20, t_hi, t_lo, val_label, secondary_cols=sec)
 
 with tab_car:
     render_tab('car_metrics', 'car_wavg', 'car', 'CARs Closed',
@@ -669,10 +693,10 @@ with tab_pto:
                D['pto_t_hi'], D['pto_t_lo'], D['pto_top20'], 'PTOs Ov90')
 
 with tab_combined:
-    def cmb_sec():
+    def cmb_sec(top20):
         cs = D['car_stats']; ps = D['pto_stats']
         return [{'CAR ≥90': cs[i['loc']]['last_ov'],
-                 'PTO ≥90': ps[i['loc']]['last_ov']} for i in D['cmb_top20']]
+                 'PTO ≥90': ps[i['loc']]['last_ov']} for i in top20]
     render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
                D['cmb_t_hi'], D['cmb_t_lo'], D['cmb_top20'], 'Total Ov90',
                show_split=True, secondary_cols_fn=cmb_sec)
@@ -681,6 +705,13 @@ with tab_combined:
 if export_btn:
     buf = export_excel(D, data_key, title_loc)
     st.sidebar.download_button(
-        "⬇ Download Excel", buf,
-        file_name=f"CAPA_Dashboard_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        "⬇ Download Monthly Detail", buf,
+        file_name=f"CAPA_Monthly_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+if export_reg_btn:
+    buf = export_regional_summary(D, as_of_date=datetime.now().strftime("%b %d, %Y"))
+    st.sidebar.download_button(
+        "⬇ Download Regional Summary", buf,
+        file_name=f"CAPA_Regional_Summary_{datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
