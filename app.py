@@ -320,35 +320,49 @@ def get_sliced(key):return slice_data(D[key].get(data_key, D[key]['ALL']))
 # ══════════════════════════════════════════════════════════════════
 # SCORECARD  (always full data range — no slicing)
 # ══════════════════════════════════════════════════════════════════
-def scorecard(full_metrics, full_wavg, colors, closed_label, t_hi, t_lo):
-    NM_full      = len(all_months)
-    last_dec_idx = D['last_dec_idx']
+def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
+    NM           = len(metrics)
+    last_month   = slice_months[-1] if slice_months else all_months[-1]
+    prev_month   = slice_months[-2] if len(slice_months) > 1 else last_month
+
+    # YE benchmark: always last complete year (dynamic, not hardcoded)
     last_dec_yr  = D['last_dec_year']
-    last_month   = all_months[-1]
-    prev_month   = all_months[-2] if NM_full > 1 else all_months[-1]
+    last_dec_idx_full = D['last_dec_idx']
     ye_label     = f"{last_dec_yr} YE"
 
-    closed_list = [r['closed']   for r in full_metrics]
-    avg_list    = [r['avg_days'] for r in full_metrics if r['closed'] > 0]
-    ov_list     = [r['ov90']     for r in full_metrics]
+    # Find Dec position within sliced range (may be outside slice)
+    dec_in_slice = last_dec_idx_full - start_idx
+    has_dec      = 0 <= dec_in_slice < NM
+
+    closed_list  = [r['closed']   for r in metrics]
+    avg_list     = [r['avg_days'] for r in metrics if r['closed'] > 0]
+    ov_list      = [r['ov90']     for r in metrics]
 
     total_closed = sum(closed_list)
     avg_days_val = int(round(np.mean(avg_list))) if avg_list else 0
-    avg_ov90     = int(round(np.mean(ov_list)))
-    last_ov      = ov_list[-1]
-    prev_ov      = ov_list[-2] if NM_full > 1 else last_ov
-    cur_wavg     = full_wavg[-1]
-    ye_wavg      = full_wavg[last_dec_idx]
+    avg_ov90     = int(round(np.mean(ov_list))) if ov_list else 0
+    last_ov      = ov_list[-1] if ov_list else 0
+    prev_ov      = ov_list[-2] if NM > 1 else last_ov
+    cur_wavg     = wavg_vals[-1] if wavg_vals else 0
 
-    ye_closed    = sum(r['closed']   for r in full_metrics[:last_dec_idx + 1])
-    ye_avg_list  = [r['avg_days']    for r in full_metrics[:last_dec_idx + 1] if r['closed'] > 0]
-    ye_avg_days  = int(round(np.mean(ye_avg_list))) if ye_avg_list else 0
-    ye_avg_ov90  = int(round(np.mean([r['ov90'] for r in full_metrics[:last_dec_idx + 1]])))
-    ye_last_ov   = ov_list[last_dec_idx]
+    # YE values — from full data if Dec is outside slice, else from slice
+    full_m  = get_full('car_metrics' if closed_label == 'CARs Closed'
+                       else ('pto_metrics' if closed_label == 'PTOs Closed'
+                             else 'cmb_metrics'))
+    full_w  = get_full('car_wavg'    if closed_label == 'CARs Closed'
+                       else ('pto_wavg'    if closed_label == 'PTOs Closed'
+                             else 'cmb_wavg'))
+    ye_closed   = sum(r['closed']   for r in full_m[:last_dec_idx_full + 1])
+    ye_avg_list = [r['avg_days']   for r in full_m[:last_dec_idx_full + 1] if r['closed'] > 0]
+    ye_avg_days = int(round(np.mean(ye_avg_list))) if ye_avg_list else 0
+    ye_avg_ov90 = int(round(np.mean([r['ov90'] for r in full_m[:last_dec_idx_full + 1]])))
+    ye_last_ov  = full_m[last_dec_idx_full]['ov90']
+    ye_wavg     = full_w[last_dec_idx_full]
 
     trend        = '▲ Worse'   if last_ov > prev_ov else ('▼ Improved' if last_ov < prev_ov else '→ Flat')
     trend_color  = '#ef4444'   if '▲' in trend else ('#22c55e' if '▼' in trend else '#6b7c93')
     ye_ov_color  = ov_color(ye_last_ov, t_hi, t_lo)[0]
+    ye_trend_lbl = f"Dec {last_dec_yr}: {ye_last_ov} open over 90d"
 
     def card(border, val_color, val_size, val, lbl, sub, ye_color, ye_val):
         return f"""
@@ -364,7 +378,7 @@ def scorecard(full_metrics, full_wavg, colors, closed_label, t_hi, t_lo):
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         st.markdown(card(colors['primary'], colors['primary'], '1.8rem',
-            f"{total_closed:,}", closed_label, "Full period total",
+            f"{total_closed:,}", closed_label, f"{start_month} – {last_month}",
             colors['primary'], f"{ye_closed:,}"), unsafe_allow_html=True)
     with c2:
         st.markdown(card('#64748b', '#0d1117', '1.8rem',
@@ -378,7 +392,7 @@ def scorecard(full_metrics, full_wavg, colors, closed_label, t_hi, t_lo):
     with c4:
         st.markdown(card(trend_color, trend_color, '1.25rem',
             trend, f"{last_month} vs {prev_month}", "Open ≥90 trend",
-            ye_ov_color, f"Dec ov90: {ye_last_ov}"), unsafe_allow_html=True)
+            ye_ov_color, ye_trend_lbl), unsafe_allow_html=True)
     with c5:
         st.markdown(f"""
         <div class="metric-card" style="border-color:{colors['wavg']}">
@@ -623,7 +637,7 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
     sliced_w      = get_sliced(wavg_key)
     colors        = THEME[theme_key]
 
-    scorecard(full_metrics, full_wavg, colors, closed_label, t_hi, t_lo)
+    scorecard(sliced_m, sliced_w, colors, closed_label, t_hi, t_lo)
     st.markdown('<div style="margin-top:1.1rem"></div>', unsafe_allow_html=True)
 
     col_chart, col_gap, col_table = st.columns([2.4, 0.05, 1])
