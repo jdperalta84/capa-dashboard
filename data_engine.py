@@ -1,7 +1,9 @@
 """
 data_engine.py
-Accepts either a file path string OR a BytesIO object (Streamlit Cloud uploads).
-Auto-detects header row (row 1 or row 2) and CAR effectiveness column name.
+Auto-detects file format:
+  - MASTER format: output of merge.py (Data - CARs / Data - PTOs with normalized columns)
+  - PIVOT  format: legacy monthly snapshot file (Data - CARs / Open data - PTOs)
+Both formats produce the identical output dict consumed by app.py.
 """
 
 import io
@@ -21,117 +23,142 @@ REGION_COLORS = {
     'Calibration':         '#C0392B',
 }
 
+# Full location → region lookup (built from List source + master data)
+# Add new locations here as labs expand internationally
+LOCATION_REGION = {
+    "AGRI (HTC)":                          "USGC",
+    "Albany, NY":                          "USNE, USMW & Canada",
+    "Avenel (NYH), NJ":                    "USNE, USMW & Canada",
+    "Bahamas (Freeport), GBI":             "SE & Caribbean",
+    "Baltimore (Glen Burnie), MD":         "SE & Caribbean",
+    "Baton Rouge (Gonzales), LA":          "SE & Caribbean",
+    "Baytown, TX":                         "USGC",
+    "Belle Chasse, LA":                    "SE & Caribbean",
+    "Bellingham (Ferndale), WA":           "USWC",
+    "Bostco, TX":                          "USGC",
+    "Boston (Everett), MA":                "USNE, USMW & Canada",
+    "Brownsville, TX":                     "USGC",
+    "CORPORATE, NJ":                       "Corporate",
+    "Cape Canaveral, FL":                  "SE & Caribbean",
+    "Chicago, IL":                         "SE & Caribbean",
+    "Cincinnati (Erlanger), OH":           "SE & Caribbean",
+    "Collins (Purvis), MS":                "SE & Caribbean",
+    "Corpus Christi, TX":                  "USGC",
+    "Corpus Christi, TX (CITGO Lab)":      "USGC",
+    "Cushing, OK":                         "USGC",
+    "Decatur, AL":                         "SE & Caribbean",
+    "Freeport, TX":                        "USGC",
+    "Ft Lauderdale (Davie), FL":           "SE & Caribbean",
+    "HOFTI / Channelview, TX":             "USGC",
+    "HST Weights & Measures":              "Calibration",
+    "Halifax (Dartmouth), NS":             "USNE, USMW & Canada",
+    "Hamilton (Burlington), ON":           "USNE, USMW & Canada",
+    "Houston (HTC), TX":                   "USGC",
+    "Ingleside, TX":                       "USGC",
+    "Kenai, AK":                           "USWC",
+    "Lake Charles (Sulfur), LA":           "USGC",
+    "Levis (Quebec City), Quebec":         "USNE, USMW & Canada",
+    "Los Angeles (Signal Hill), CA":       "USWC",
+    "Marcus Hook, PA":                     "SE & Caribbean",
+    "Memphis, TN":                         "SE & Caribbean",
+    "Mickleton (Philly), NJ":              "SE & Caribbean",
+    "Midland, TX":                         "USGC",
+    "Minot, ND":                           "USGC",
+    "Mobile, AL":                          "SE & Caribbean",
+    "Mont Belvieu, TX":                    "USGC",
+    "Montreal, QC":                        "USNE, USMW & Canada",
+    "New Haven, CT":                       "USNE, USMW & Canada",
+    "New Orleans (Destrehan), LA":         "SE & Caribbean",
+    "Newfoundland (Arnold's Cove)":        "USNE, USMW & Canada",
+    "Pecos (West Texas), TX":             "USGC",
+    "Phoenix, AZ":                         "USWC",
+    "Pittsburgh, PA":                      "SE & Caribbean",
+    "Port Arthur (Beaumont), TX":          "USGC",
+    "Port Arthur (Sabine Blending Lab), TX": "USGC",
+    "Port Lavaca, TX":                     "USGC",
+    "Portland, ME":                        "USNE, USMW & Canada",
+    "Providence, RI":                      "USNE, USMW & Canada",
+    "Puerto Rico":                         "SE & Caribbean",
+    "San Francisco (Concord), CA":         "USWC",
+    "Savannah, GA / Charleston, SC":       "SE & Caribbean",
+    "Seabrook (Chemicals), TX":            "USGC",
+    "St Croix, USVI":                      "SE & Caribbean",
+    "St James, LA":                        "SE & Caribbean",
+    "St John, NB":                         "USNE, USMW & Canada",
+    "St Louis, MO":                        "SE & Caribbean",
+    "Tacoma, WA":                          "USWC",
+    "Tampa, FL":                           "SE & Caribbean",
+    "Texas City, TX":                      "USGC",
+    "Valdez, AK":                          "USWC",
+    "Yorktown (Norfolk), VA":              "SE & Caribbean",
+}
+
 SKIP_LOCS = ['A&B Labs', 'VOIDED', 'Extras', 'Warehouse', 'Additives',
              'Utah', 'Cameron', 'Specialty', 'Kenner', 'Santurce', 'Boucherville']
 
 
 def _read_source(source, sheet_name, header=0):
-    """Read excel, seeking BytesIO to 0 first."""
     if isinstance(source, io.BytesIO):
         source.seek(0)
     return pd.read_excel(source, sheet_name=sheet_name, header=header)
 
 
-def load_and_compute(file_source) -> dict:
-    # Normalise source
-    if isinstance(file_source, (str, Path)):
-        source      = str(file_source)
-        source_name = Path(file_source).name
-    else:
-        file_source.seek(0)
-        source      = io.BytesIO(file_source.read())
-        source_name = "uploaded file"
+def _detect_format(source):
+    """Return 'master' or 'pivot' based on sheet names and column structure."""
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
+    xl = pd.read_excel(source, sheet_name=None, nrows=2)
+    sheets = list(xl.keys())
+    # Master format has 'Data - CARs' with normalized col 'car_number'
+    if 'Data - CARs' in sheets:
+        cols = [str(c).strip() for c in xl['Data - CARs'].columns]
+        if 'car_number' in cols or 'location' in cols:
+            return 'master'
+    # Pivot format has 'Open data - PTOs'
+    if 'Open data - PTOs' in sheets:
+        return 'pivot'
+    # Fallback: if Data - CARs has pivot-style columns
+    if 'Data - CARs' in sheets:
+        cols = [str(c).strip() for c in xl['Data - CARs'].columns]
+        if any('Location' in c for c in cols):
+            return 'pivot'
+    raise ValueError(f"Unrecognised file format. Sheets found: {sheets}")
 
-    # ── List source (always header=0) ─────────────────────────────
-    ls = _read_source(source, 'List source', header=0)
 
-    # ── Auto-detect header row for CARs/PTOs ──────────────────────
-    # Try header=0 first; if 'Location \n(drop-down)' not found, use header=1
-    car_raw = _read_source(source, 'Data - CARs', header=0)
-    car_raw.columns = car_raw.columns.str.strip()
-    if 'Location \n(drop-down)' not in car_raw.columns:
-        car_raw = _read_source(source, 'Data - CARs', header=1)
-        car_raw.columns = car_raw.columns.str.strip()
+def _build_region_map(locations):
+    """Build region_map from LOCATION_REGION lookup. Unknown locs go to 'Other'."""
+    region_map = {}
+    for loc in locations:
+        region = LOCATION_REGION.get(loc)
+        if region is None:
+            # Try partial match for flexibility
+            for known_loc, known_region in LOCATION_REGION.items():
+                if known_loc.lower() in loc.lower() or loc.lower() in known_loc.lower():
+                    region = known_region
+                    break
+        if region is None:
+            region = 'Other'
+        region_map.setdefault(region, []).append(loc)
+    return region_map
 
-    pto_raw = _read_source(source, 'Open data - PTOs', header=0)
-    pto_raw.columns = pto_raw.columns.str.strip()
-    if 'Location \n(drop-down)' not in pto_raw.columns:
-        pto_raw = _read_source(source, 'Open data - PTOs', header=1)
-        pto_raw.columns = pto_raw.columns.str.strip()
 
-    # ── Auto-detect CAR effectiveness column name ─────────────────
-    car_eff_cols = [c for c in car_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()]
-    if not car_eff_cols:
-        raise ValueError(f"Cannot find effectiveness column in CARs sheet. Columns: {car_raw.columns.tolist()}")
-    car_eff_col = car_eff_cols[0]
+# ══════════════════════════════════════════════════════════════════
+# SHARED METRIC ENGINE
+# (used by both format pipelines once data is normalised)
+# ══════════════════════════════════════════════════════════════════
+def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
+                     months, all_locations, region_map):
 
-    pto_eff_cols = [c for c in pto_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()]
-    if not pto_eff_cols:
-        raise ValueError(f"Cannot find effectiveness column in PTOs sheet. Columns: {pto_raw.columns.tolist()}")
-    pto_eff_col = pto_eff_cols[0]
-
-    # ── Auto-detect date range from data ──────────────────────────
-    car_raw['_init'] = pd.to_datetime(car_raw['CAR initialized date'], errors='coerce')
-    pto_raw['_init'] = pd.to_datetime(pto_raw['PTO initialized date'], errors='coerce')
-    all_dates = pd.concat([car_raw['_init'].dropna(), pto_raw['_init'].dropna()])
-    data_start = all_dates.min().to_period('M')
-    # End: use close dates to find latest activity
-    car_raw['_close'] = pd.to_datetime(car_raw[car_eff_col], errors='coerce')
-    pto_raw['_close'] = pd.to_datetime(pto_raw[pto_eff_col], errors='coerce')
-    all_close = pd.concat([car_raw['_close'].dropna(), pto_raw['_close'].dropna()])
-    data_end = all_close.max().to_period('M')
-
-    months       = pd.period_range(data_start, data_end, freq='M')
+    NM = len(months)
     month_labels = [m.strftime('%b %Y') for m in months]
-    NM           = len(months)
 
     # Year-end indices
-    year_end_indices = {}
-    for i, m in enumerate(months):
-        if m.month == 12:
-            year_end_indices[m.year] = i
-    # Use last December in data as primary KPI reference
+    year_end_indices = {m.year: i for i, m in enumerate(months) if m.month == 12}
     last_dec_year = max(year_end_indices.keys()) if year_end_indices else None
     last_dec_idx  = year_end_indices.get(last_dec_year, NM - 1)
     prev_dec_year = last_dec_year - 1 if last_dec_year else None
     prev_dec_idx  = year_end_indices.get(prev_dec_year, None)
 
-    # ── Master location list ──────────────────────────────────────
-    ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
-    ls['Location'] = ls['Location'].str.strip()
-    ls['Area']     = ls['Area'].str.strip()
-    ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
-    ls = ls[ls['Area'] != 'VOID']
-    region_map    = {}
-    for _, row in ls.iterrows():
-        region_map.setdefault(row['Area'], []).append(row['Location'])
-    all_locations = sorted(ls['Location'].unique().tolist())
-
-    # ── Prep CARs ─────────────────────────────────────────────────
-    car = car_raw.copy()
-    car['loc']        = car['Location \n(drop-down)'].astype(str).str.strip()
-    car['init_date']  = pd.to_datetime(car['CAR initialized date'], errors='coerce')
-    car['close_date'] = pd.to_datetime(car[car_eff_col], errors='coerce')
-    car['days2close'] = pd.to_numeric(car['Days to close'], errors='coerce')
-    car['status']     = car['Status'].astype(str).str.strip()
-    car = car[car['init_date'].notna() & (car['loc'] != 'nan')]
-    car_closed = car[car['status'] == 'CLOSED'].copy()
-    car_open   = car[car['status'] == 'OPEN'].copy()
-    car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
-
-    # ── Prep PTOs ─────────────────────────────────────────────────
-    pto = pto_raw.copy()
-    pto['loc']        = pto['Location \n(drop-down)'].astype(str).str.strip()
-    pto['init_date']  = pd.to_datetime(pto['PTO initialized date'], errors='coerce')
-    pto['close_date'] = pd.to_datetime(pto[pto_eff_col], errors='coerce')
-    pto['is_closed']  = pto['close_date'].notna()
-    pto['days2close'] = (pto['close_date'] - pto['init_date']).dt.days
-    pto = pto[pto['init_date'].notna() & (pto['loc'] != 'nan')]
-    pto_closed = pto[pto['is_closed']].copy()
-    pto_open   = pto[~pto['is_closed']].copy()
-    pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
-
-    # ── Filter helper ─────────────────────────────────────────────
     def filter_df(df, loc_key):
         if loc_key == 'ALL':
             return df
@@ -139,7 +166,6 @@ def load_and_compute(file_source) -> dict:
             return df[df['loc'].isin(region_map.get(loc_key[7:], []))]
         return df[df['loc'] == loc_key]
 
-    # ── Core metric calc ──────────────────────────────────────────
     def calc(closed_df, open_df, loc_key):
         c = filter_df(closed_df, loc_key)
         o = filter_df(open_df,   loc_key)
@@ -154,11 +180,13 @@ def load_and_compute(file_source) -> dict:
             all_open = pd.concat([oe_c[['init_date']], oe_o[['init_date']]])
             all_open['days'] = (me - all_open['init_date']).dt.days
             ov90 = int((all_open['days'] >= 90).sum())
-            rows.append({'closed': cnt, 'avg_days': avg, 'ov90': ov90, 'total_days': cnt * avg})
+            rows.append({'closed': cnt, 'avg_days': avg, 'ov90': ov90,
+                         'total_days': cnt * avg})
         return rows
 
     def calc_combined(loc_key):
-        cd = car_metrics[loc_key]; pd_ = pto_metrics[loc_key]
+        cd = car_metrics[loc_key]
+        pd_ = pto_metrics[loc_key]
         rows = []
         for i in range(NM):
             c, p  = cd[i], pd_[i]
@@ -180,7 +208,6 @@ def load_and_compute(file_source) -> dict:
             result.append(int(round(cum_days / cum_cls)) if cum_cls > 0 else 0)
         return result
 
-    # ── Build all keys ────────────────────────────────────────────
     region_keys = [f'REGION:{r}' for r in REGION_ORDER if r in region_map]
     all_keys    = ['ALL'] + region_keys + all_locations
 
@@ -192,7 +219,6 @@ def load_and_compute(file_source) -> dict:
     pto_wavg = {k: running_wavg(pto_metrics[k]) for k in all_keys}
     cmb_wavg = {k: running_wavg(cmb_metrics[k]) for k in all_keys}
 
-    # ── Per-location stats ────────────────────────────────────────
     last_idx = NM - 1
 
     def build_stats(metrics, wavg):
@@ -227,31 +253,168 @@ def load_and_compute(file_source) -> dict:
                  'total_closed': stats[l]['total_closed']} for l in ranked]
 
     return {
-        'car_metrics':   car_metrics,
-        'pto_metrics':   pto_metrics,
-        'cmb_metrics':   cmb_metrics,
-        'car_wavg':      car_wavg,
-        'pto_wavg':      pto_wavg,
-        'cmb_wavg':      cmb_wavg,
-        'car_stats':     car_stats,
-        'pto_stats':     pto_stats,
-        'cmb_stats':     cmb_stats,
+        'car_metrics': car_metrics, 'pto_metrics': pto_metrics, 'cmb_metrics': cmb_metrics,
+        'car_wavg':    car_wavg,    'pto_wavg':    pto_wavg,    'cmb_wavg':    cmb_wavg,
+        'car_stats':   car_stats,   'pto_stats':   pto_stats,   'cmb_stats':   cmb_stats,
         'car_t_hi': car_t_hi, 'car_t_lo': car_t_lo,
         'pto_t_hi': pto_t_hi, 'pto_t_lo': pto_t_lo,
         'cmb_t_hi': cmb_t_hi, 'cmb_t_lo': cmb_t_lo,
-        'car_top20':     top20(car_stats),
-        'pto_top20':     top20(pto_stats),
-        'cmb_top20':     top20(cmb_stats),
-        'month_labels':  month_labels,
-        'last_dec_idx':  last_dec_idx,
-        'last_dec_year': last_dec_year,
-        'prev_dec_idx':  prev_dec_idx,
-        'prev_dec_year': prev_dec_year,
-        'year_end_indices': year_end_indices,
-        'all_locations': all_locations,
-        'region_map':    region_map,
-        'region_order':  REGION_ORDER,
-        'region_colors': REGION_COLORS,
-        'loaded_at':     pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p'),
-        'file_path':     source_name,
+        'car_top20': top20(car_stats),
+        'pto_top20': top20(pto_stats),
+        'cmb_top20': top20(cmb_stats),
+        'month_labels':      month_labels,
+        'last_dec_idx':      last_dec_idx,
+        'last_dec_year':     last_dec_year,
+        'prev_dec_idx':      prev_dec_idx,
+        'prev_dec_year':     prev_dec_year,
+        'year_end_indices':  year_end_indices,
+        'all_locations':     all_locations,
+        'region_map':        region_map,
+        'region_order':      REGION_ORDER,
+        'region_colors':     REGION_COLORS,
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+# MASTER FORMAT PIPELINE
+# ══════════════════════════════════════════════════════════════════
+def _load_master(source):
+    car_raw = _read_source(source, 'Data - CARs')
+    pto_raw = _read_source(source, 'Data - PTOs')
+
+    def prep(df):
+        df = df.copy()
+        df['loc']        = df['location'].astype(str).str.strip()
+        df['init_date']  = pd.to_datetime(df['init_date'], errors='coerce')
+        df['close_date'] = pd.to_datetime(df['close_date'], errors='coerce')
+        df['days2close'] = (df['close_date'] - df['init_date']).dt.days
+        df['is_closed']  = df['close_date'].notna()
+        df = df[df['init_date'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
+        df = df[~df['loc'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
+        return df
+
+    car = prep(car_raw)
+    pto = prep(pto_raw)
+
+    car_closed = car[car['is_closed']].copy()
+    car_open   = car[~car['is_closed']].copy()
+    pto_closed = pto[pto['is_closed']].copy()
+    pto_open   = pto[~pto['is_closed']].copy()
+
+    car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
+    pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
+
+    # Date range: init start → max close or today
+    all_inits  = pd.concat([car['init_date'], pto['init_date']]).dropna()
+    all_closes = pd.concat([car_closed['close_date'], pto_closed['close_date']]).dropna()
+    data_start = all_inits.min().to_period('M')
+    data_end   = max(all_closes.max(), pd.Timestamp.now()).to_period('M')
+    months     = pd.period_range(data_start, data_end, freq='M')
+
+    # Locations + region map
+    all_locs_raw  = sorted(set(car['loc'].unique()) | set(pto['loc'].unique()))
+    all_locations = [l for l in all_locs_raw
+                     if not any(s in l for s in SKIP_LOCS) and l not in ('nan','')]
+    region_map    = _build_region_map(all_locations)
+
+    return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
+
+
+# ══════════════════════════════════════════════════════════════════
+# PIVOT FORMAT PIPELINE  (legacy)
+# ══════════════════════════════════════════════════════════════════
+def _load_pivot(source):
+    # List source for region map
+    ls = _read_source(source, 'List source', header=0)
+    ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
+    ls['Location'] = ls['Location'].str.strip()
+    ls['Area']     = ls['Area'].str.strip()
+    ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
+    ls = ls[ls['Area'] != 'VOID']
+    region_map    = {}
+    for _, row in ls.iterrows():
+        region_map.setdefault(row['Area'], []).append(row['Location'])
+    all_locations = sorted(ls['Location'].unique().tolist())
+
+    # CARs
+    car_raw = _read_source(source, 'Data - CARs', header=0)
+    car_raw.columns = car_raw.columns.str.strip()
+    if 'Location \n(drop-down)' not in car_raw.columns:
+        car_raw = _read_source(source, 'Data - CARs', header=1)
+        car_raw.columns = car_raw.columns.str.strip()
+
+    # PTOs
+    pto_raw = _read_source(source, 'Open data - PTOs', header=0)
+    pto_raw.columns = pto_raw.columns.str.strip()
+    if 'Location \n(drop-down)' not in pto_raw.columns:
+        pto_raw = _read_source(source, 'Open data - PTOs', header=1)
+        pto_raw.columns = pto_raw.columns.str.strip()
+
+    # CAR effectiveness col
+    car_eff_col = next((c for c in car_raw.columns
+                        if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
+    if not car_eff_col:
+        raise ValueError(f"Cannot find effectiveness column in CARs. Columns: {car_raw.columns.tolist()}")
+
+    pto_eff_col = next((c for c in pto_raw.columns
+                        if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
+    if not pto_eff_col:
+        raise ValueError(f"Cannot find effectiveness column in PTOs. Columns: {pto_raw.columns.tolist()}")
+
+    def prep_pivot(raw, loc_col, init_col, eff_col):
+        df = raw.copy()
+        df['loc']        = df[loc_col].astype(str).str.strip()
+        df['init_date']  = pd.to_datetime(df[init_col], errors='coerce')
+        df['close_date'] = pd.to_datetime(df[eff_col],  errors='coerce')
+        df['days2close'] = (df['close_date'] - df['init_date']).dt.days
+        df['is_closed']  = df['close_date'].notna()
+        df = df[df['init_date'].notna() & (df['loc'] != 'nan')]
+        return df
+
+    car = prep_pivot(car_raw, 'Location \n(drop-down)', 'CAR initialized date', car_eff_col)
+    pto = prep_pivot(pto_raw, 'Location \n(drop-down)', 'PTO initialized date', pto_eff_col)
+
+    car_closed = car[car['is_closed']].copy()
+    car_open   = car[~car['is_closed']].copy()
+    pto_closed = pto[pto['is_closed']].copy()
+    pto_open   = pto[~pto['is_closed']].copy()
+
+    car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
+    pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
+
+    all_inits  = pd.concat([car['init_date'], pto['init_date']]).dropna()
+    all_closes = pd.concat([car_closed['close_date'], pto_closed['close_date']]).dropna()
+    data_start = all_inits.min().to_period('M')
+    data_end   = all_closes.max().to_period('M')
+    months     = pd.period_range(data_start, data_end, freq='M')
+
+    return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
+
+
+# ══════════════════════════════════════════════════════════════════
+# MAIN ENTRY POINT
+# ══════════════════════════════════════════════════════════════════
+def load_and_compute(file_source) -> dict:
+    if isinstance(file_source, (str, Path)):
+        source      = str(file_source)
+        source_name = Path(file_source).name
+    else:
+        file_source.seek(0)
+        source      = io.BytesIO(file_source.read())
+        source_name = "uploaded file"
+
+    fmt = _detect_format(source)
+
+    if fmt == 'master':
+        car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map = \
+            _load_master(source)
+    else:
+        car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map = \
+            _load_pivot(source)
+
+    result = _compute_metrics(car_closed, car_open, pto_closed, pto_open,
+                              months, all_locations, region_map)
+    result['loaded_at']  = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
+    result['file_path']  = source_name
+    result['file_format'] = fmt
+    return result
