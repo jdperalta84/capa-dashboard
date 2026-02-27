@@ -147,16 +147,16 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     ytd_start = next((i for i, m in enumerate(months) if m == f'Jan {cur_yr}'), 0)
 
     def calc_metrics_for_range(metrics_dict, loc_key, start_i, end_i):
-        """Compute avg_days, last_ov90, total_closed for a month range."""
+        """Compute weighted avg_days, last_ov90, total_closed for a month range."""
         rows = metrics_dict.get(loc_key, metrics_dict.get('ALL', []))
         slc  = rows[start_i:end_i + 1]
         if not slc:
             return 0, 0, 0
         total_closed = sum(r['closed'] for r in slc)
-        avg_list     = [r['avg_days'] for r in slc if r['closed'] > 0]
-        avg_days     = int(round(sum(avg_list) / len(avg_list))) if avg_list else 0
+        total_days   = sum(r['closed'] * r['avg_days'] for r in slc)
+        wtd_avg      = int(round(total_days / total_closed)) if total_closed > 0 else 0
         last_ov      = rows[end_i]['ov90'] if end_i < len(rows) else 0
-        return avg_days, last_ov, total_closed
+        return wtd_avg, last_ov, total_closed
 
     TABS = [
         ('CARs',     'car_metrics',  '1F4E79'),
@@ -201,8 +201,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
         # ── Column headers row 3 ───────────────────────────────────
         headers = ['Region / Location',
-                   'Avg Days to Close', f'Open >90 as of Dec 31', 'Total Closed',
-                   'Avg Days to Close', f'Open >90 (Current)', 'Total Closed',
+                   'Wtd Avg Days to Close', f'Open >90 as of Dec 31', 'Total Closed',
+                   'Wtd Avg Days to Close', f'Open >90 (Current)', 'Total Closed',
                    'Notes']
         for ci, h in enumerate(headers, 1):
             c = ws.cell(row=3, column=ci, value=h)
