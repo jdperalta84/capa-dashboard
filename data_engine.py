@@ -117,6 +117,9 @@ LOCATION_REGION = {
 SKIP_LOCS = ['A&B Labs', 'VOIDED', 'Extras', 'Warehouse', 'Additives',
              'Utah', 'Cameron', 'Specialty', 'Kenner', 'Santurce', 'Boucherville']
 
+# Regions excluded from CARs and PTOs metrics entirely
+EXCLUDE_REGIONS = {'Corporate'}
+
 
 def _read_source(source, sheet_name, header=0):
     if isinstance(source, io.BytesIO):
@@ -146,19 +149,44 @@ def _detect_format(source):
     raise ValueError(f"Unrecognised file format. Sheets found: {sheets}")
 
 
-def _build_region_map(locations):
-    """Build region_map from LOCATION_REGION lookup. Unknown locs go to 'Other'."""
+def _read_list_source(source):
+    """Read List source sheet if present, return {location: region} dict or None."""
+    try:
+        if isinstance(source, io.BytesIO):
+            source.seek(0)
+        ls = pd.read_excel(source, sheet_name='List source', header=0)
+        # Find location and area columns flexibly
+        loc_col  = next((c for c in ls.columns if 'Location' in str(c)), None)
+        area_col = next((c for c in ls.columns if 'Area' in str(c)), None)
+        if not loc_col or not area_col:
+            return None
+        ls = ls[[loc_col, area_col]].dropna()
+        ls[loc_col]  = ls[loc_col].astype(str).str.strip()
+        ls[area_col] = ls[area_col].astype(str).str.strip()
+        ls = ls[ls[area_col] != 'VOID']
+        ls = ls[~ls[loc_col].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
+        return dict(zip(ls[loc_col], ls[area_col]))
+    except Exception:
+        return None
+
+
+def _build_region_map(locations, loc_region_override=None):
+    """Build region_map from List source override or LOCATION_REGION fallback.
+    Excludes any region in EXCLUDE_REGIONS."""
+    lookup = loc_region_override if loc_region_override else LOCATION_REGION
     region_map = {}
     for loc in locations:
-        region = LOCATION_REGION.get(loc)
+        region = lookup.get(loc)
         if region is None:
             # Try partial match for flexibility
-            for known_loc, known_region in LOCATION_REGION.items():
+            for known_loc, known_region in lookup.items():
                 if known_loc.lower() in loc.lower() or loc.lower() in known_loc.lower():
                     region = known_region
                     break
         if region is None:
             region = 'Other'
+        if region in EXCLUDE_REGIONS:
+            continue  # Skip excluded regions entirely
         region_map.setdefault(region, []).append(loc)
     return region_map
 
@@ -332,11 +360,23 @@ def _load_master(source):
     data_end   = max(all_closes.max(), pd.Timestamp.now()).to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
 
+    # Read List source for region assignments if present
+    loc_region_override = _read_list_source(source)
+
     # Locations + region map
     all_locs_raw  = sorted(set(car['loc'].unique()) | set(pto['loc'].unique()))
     all_locations = [l for l in all_locs_raw
                      if not any(s in l for s in SKIP_LOCS) and l not in ('nan','')]
-    region_map    = _build_region_map(all_locations)
+    region_map    = _build_region_map(all_locations, loc_region_override)
+
+    # Exclude locations that belong to excluded regions
+    excluded_locs = set(all_locs_raw) - set(l for locs in region_map.values() for l in locs)
+    if excluded_locs:
+        car_closed = car_closed[~car_closed['loc'].isin(excluded_locs)]
+        car_open   = car_open[~car_open['loc'].isin(excluded_locs)]
+        pto_closed = pto_closed[~pto_closed['loc'].isin(excluded_locs)]
+        pto_open   = pto_open[~pto_open['loc'].isin(excluded_locs)]
+    all_locations = [l for l in all_locations if l not in excluded_locs]
 
     return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
 
@@ -352,6 +392,7 @@ def _load_pivot(source):
     ls['Area']     = ls['Area'].str.strip()
     ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
     ls = ls[ls['Area'] != 'VOID']
+    ls = ls[~ls['Area'].isin(EXCLUDE_REGIONS)]  # exclude Corporate etc.
     region_map    = {}
     for _, row in ls.iterrows():
         region_map.setdefault(row['Area'], []).append(row['Location'])
@@ -408,6 +449,17 @@ def _load_pivot(source):
     data_start = all_inits.min().to_period('M')
     data_end   = all_closes.max().to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
+
+    # Exclude Corporate and other excluded-region locations from data
+    excluded_locs = set()
+    for region in EXCLUDE_REGIONS:
+        for loc in ls[ls['Area'] == region]['Location'].tolist() if 'Area' in ls.columns else []:
+            excluded_locs.add(loc)
+    if excluded_locs:
+        car_closed = car_closed[~car_closed['loc'].isin(excluded_locs)]
+        car_open   = car_open[~car_open['loc'].isin(excluded_locs)]
+        pto_closed = pto_closed[~pto_closed['loc'].isin(excluded_locs)]
+        pto_open   = pto_open[~pto_open['loc'].isin(excluded_locs)]
 
     return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
 
