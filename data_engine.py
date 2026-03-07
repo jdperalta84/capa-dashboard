@@ -45,9 +45,11 @@ REGION_COLORS = {
 # Regions excluded entirely from all metrics
 EXCLUDE_REGIONS = {'Corporate', 'Agri', 'Environmental', 'Unassigned', 'VOID'}
 
+# Location name prefixes excluded regardless of their assigned region
+EXCLUDE_LOC_PREFIXES = ('agri', 'corporate', 'environmental', 'unassigned', 'void')
+
 # Fallback hardcoded location→region (only used if List source sheet is missing)
 LOCATION_REGION = {
-    "AGRI (HTC)":                            "USGC",
     "Albany, NY":                            "USNE",
     "Avenel (NYH), NJ":                      "USNE",
     "Bahamas (Freeport), GBI":               "USMA & Carib",
@@ -174,7 +176,8 @@ def _read_list_source(source):
         sub[loc_col]  = sub[loc_col].astype(str).str.strip()
         sub[area_col] = sub[area_col].astype(str).str.strip()
         sub = sub[sub[loc_col].ne('') & sub[loc_col].ne('nan')]
-        sub = sub[sub[area_col].ne('VOID')]
+        sub = sub[~sub[area_col].isin(EXCLUDE_REGIONS)]
+        sub = sub[~sub[loc_col].str.lower().str.startswith(EXCLUDE_LOC_PREFIXES)]
         loc_region = dict(zip(sub[loc_col], sub[area_col]))
         loc_id = {}
         if id_col:
@@ -192,6 +195,8 @@ def _build_region_map(locations, loc_region_lookup):
     loc_region_lookup: dict from List source (or fallback LOCATION_REGION)."""
     region_map = {}
     for loc in locations:
+        if loc.lower().startswith(EXCLUDE_LOC_PREFIXES):
+            continue
         region = loc_region_lookup.get(loc)
         if region is None:
             # Partial match fallback
