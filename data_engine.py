@@ -278,7 +278,7 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
 
     def ov90_snapshot(all_df, loc_key, m):
         """
-        Count records open as of month-end m that had been open >= 90 days.
+        Count records open as of month-end m that had been open > 90 days.
         A record was open at month-end if:
           - init_date <= (month_end - 90 days)
           - close_date is NaT  OR  close_date > month_end
@@ -287,7 +287,7 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
         if df is None or len(df) == 0:
             return 0
         me     = month_last_ts(m)
-        cutoff = me - pd.Timedelta(days=90)
+        cutoff = me - pd.Timedelta(days=91)   # >90 days: day 91+ is overdue
         mask_init  = df['init_date'] <= cutoff
         mask_open  = df['close_date'].isna() | (df['close_date'] > me)
         return int((mask_init & mask_open).sum())
@@ -296,12 +296,15 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
         c    = filter_df(closed_df, loc_key)
         rows = []
         for m in months:
-            mc   = c[c['close_month'] == m]
-            cnt  = len(mc)
-            avg  = int(round(mc['days2close'].mean())) if cnt > 0 else 0
-            ov90 = ov90_snapshot(all_df, loc_key, m)
+            mc          = c[c['close_month'] == m]
+            cnt         = len(mc)
+            avg         = int(round(mc['days2close'].mean())) if cnt > 0 else 0
+            closed_ov90 = int((mc['days2close'] > 90).sum()) if cnt > 0 else 0
+            ov90        = ov90_snapshot(all_df, loc_key, m)
             rows.append({'closed': cnt, 'avg_days': avg,
-                         'ov90': ov90, 'total_days': cnt * avg})
+                         'closed_ov90': closed_ov90,   # closed records that took ≥90 days
+                         'ov90': ov90,                  # open backlog ≥90 at month-end
+                         'total_days': cnt * avg})
         return rows
 
     def calc_combined(loc_key):
@@ -313,12 +316,13 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
             avg   = int(round((c['total_days'] + p['total_days']) / total)) if total > 0 else 0
             car_ov = ov90_snapshot(car_all, loc_key, m)
             pto_ov = ov90_snapshot(pto_all, loc_key, m)
-            rows.append({'closed':     total,
-                         'avg_days':   avg,
-                         'ov90':       car_ov + pto_ov,
-                         'ov90_car':   car_ov,
-                         'ov90_pto':   pto_ov,
-                         'total_days': c['total_days'] + p['total_days']})
+            rows.append({'closed':      total,
+                         'avg_days':    avg,
+                         'closed_ov90': c['closed_ov90'] + p['closed_ov90'],
+                         'ov90':        car_ov + pto_ov,
+                         'ov90_car':    car_ov,
+                         'ov90_pto':    pto_ov,
+                         'total_days':  c['total_days'] + p['total_days']})
         return rows
 
     def running_wavg(rows):

@@ -21,11 +21,11 @@ def export_excel(D: dict, data_key: str, label: str) -> bytes:
 
     TABS = [
         ('CARs',     'car_metrics', 'car_wavg',  '1F4E79', 'D6E4F0',
-         ['Month','CARs Closed','Avg Days','Open ≥90','Wtd Avg Days','Trend']),
+         ['Month','CARs Closed','Avg Days','Open >90','Wtd Avg Days','Trend']),
         ('PTOs',     'pto_metrics', 'pto_wavg',  '375623', 'D9EAD3',
-         ['Month','PTOs Closed','Avg Days','Open ≥90','Wtd Avg Days','Trend']),
+         ['Month','PTOs Closed','Avg Days','Open >90','Wtd Avg Days','Trend']),
         ('Combined', 'cmb_metrics', 'cmb_wavg',  '4A235A', 'E8D5F5',
-         ['Month','Total Closed','Avg Days','Total ≥90','CARs ≥90','PTOs ≥90','Wtd Avg Days','Trend']),
+         ['Month','Total Closed','Avg Days','Total >90','CARs >90','PTOs >90','Wtd Avg Days','Trend']),
     ]
 
     first = True

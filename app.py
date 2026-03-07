@@ -190,6 +190,15 @@ section[data-testid="stSidebar"] .stToggle span { color: #c8d6e8 !important; }
     box-shadow: 0 4px 16px rgba(15,28,46,0.12);
     transform: translateY(-1px);
 }
+.metric-hdr {
+    font-size: 0.52rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--txt-muted);
+    font-weight: 700;
+    margin-bottom: 0.45rem;
+    opacity: 0.65;
+}
 .metric-val {
     font-family: var(--mono);
     font-size: 1.7rem;
@@ -580,50 +589,34 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     last_dec_idx_full = D['last_dec_idx']
     ye_label          = f"{last_dec_yr} YE"
 
-    closed_list  = [r['closed'] for r in metrics]
-    ov_list      = [r['ov90']   for r in metrics]   # point-in-time snapshot per month-end
+    closed_list   = [r['closed'] for r in metrics]
+    ov_snap_list  = [r['ov90']   for r in metrics]   # currently open >90 at month-end
 
-    total_closed = sum(closed_list)
-    # Card 2: snapshot value at last month in slice
-    last_ov      = ov_list[-1] if ov_list else 0
-    avg_ov90     = int(round(np.mean(ov_list))) if ov_list else 0
-    cur_wavg     = wavg_vals[-1] if wavg_vals else 0
+    total_closed  = sum(closed_list)
+    last_ov_snap  = ov_snap_list[-1] if ov_snap_list else 0
+    cur_wavg      = wavg_vals[-1] if wavg_vals else 0
 
-    # ── 6-month trend: compare last 3 months avg vs prior 3 months avg (snapshot figures) ──
+    # Closed >90: closed records whose days2close > 90 (computed per-month in engine)
+    closed_ov90_list  = [r.get('closed_ov90', 0) for r in metrics]
+    total_closed_ov90 = sum(closed_ov90_list)
+
+    # ── 6-month trend on snapshot ──
     if NM >= 6:
-        recent_3   = ov_list[-3:]
-        prior_3    = ov_list[-6:-3:]
+        recent_3   = ov_snap_list[-3:]
+        prior_3    = ov_snap_list[-6:-3:]
         recent_avg = round(np.mean(recent_3), 1)
         prior_avg  = round(np.mean(prior_3),  1)
         if prior_avg > 0:
             pct_change = int(round((recent_avg - prior_avg) / prior_avg * 100))
         else:
             pct_change = 0 if recent_avg == 0 else 100
-        abs_delta = recent_avg - prior_avg
-
-        if abs_delta > 0.5:
-            trend_icon  = '▲'
-            trend_color = '#c0392b'
-            trend_lbl   = 'Worsening (last 3 vs prior 3 mo)'
-        elif abs_delta < -0.5:
-            trend_icon  = '▼'
-            trend_color = '#0d7a4e'
-            trend_lbl   = 'Improving (last 3 vs prior 3 mo)'
-        else:
-            trend_icon  = '→'
-            trend_color = '#5a6577'
-            trend_lbl   = 'Stable (last 3 vs prior 3 mo)'
-
-        sign         = '+' if pct_change > 0 else ''
-        trend_val    = f'{sign}{pct_change}%'
-        trend_sub    = f'Snapshot avg: {recent_avg:.0f} vs {prior_avg:.0f}'
-        trend_display = f'{trend_icon} {trend_val}'
-
+        abs_delta  = recent_avg - prior_avg
+        sign       = '+' if pct_change > 0 else ''
+        snap_trend = f"{'▲' if abs_delta > 0.5 else ('▼' if abs_delta < -0.5 else '→')} {sign}{pct_change}% (last 3 vs prior 3 mo)"
+        snap_trend_color = '#c0392b' if abs_delta > 0.5 else ('#0d7a4e' if abs_delta < -0.5 else '#5a6577')
     else:
-        trend_display = '—'
-        trend_lbl     = 'Insufficient data'
-        trend_sub     = 'Need ≥6 months of data'
-        trend_color   = '#9aa3b0'
+        snap_trend       = '—'
+        snap_trend_color = '#9aa3b0'
 
     # YE values
     full_m  = get_full('car_metrics' if closed_label == 'CARs Closed'
@@ -637,53 +630,62 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
                              if m.endswith(str(last_dec_yr))), last_dec_idx_full - 11)
     ye_slice         = full_m[ye_start_idx:last_dec_idx_full + 1]
     ye_closed        = sum(r['closed'] for r in ye_slice)
-    ye_ov90          = full_m[last_dec_idx_full]['ov90']   # snapshot at Dec year-end
+    ye_ov_snap       = full_m[last_dec_idx_full]['ov90']
+    ye_closed_ov90   = sum(r.get('closed_ov90', 0) for r in ye_slice)
     ye_wavg          = full_w[last_dec_idx_full]
-    ye_ov_color      = ov_color(ye_ov90, t_hi, t_lo)[0]
-    ye_trend_lbl     = f"Dec {last_dec_yr}: {ye_ov90} open >90d"
+    ye_ov_color      = ov_color(ye_ov_snap, t_hi, t_lo)[0]
+    ye_cov_color     = ov_color(ye_closed_ov90, t_hi, t_lo)[0]
 
-    def card(border, val_color, val_size, val, lbl, sub, ye_color, ye_val):
+    def card(header, border, val_color, val_size, val, lbl, sub, ye_color, ye_val, ye_lbl=None):
+        hdr_html = f'<div class="metric-hdr">{header}</div>' if header else ''
+        ye_lbl_s = ye_lbl or ye_label
         return f"""
         <div class="metric-card" style="border-color:{border}">
+          {hdr_html}
           <div class="metric-val"  style="color:{val_color};font-size:{val_size}">{val}</div>
           <div class="metric-lbl">{lbl}</div>
           <div class="metric-sub">{sub}</div>
           <div class="metric-divider"></div>
-          <div class="metric-ye-lbl">{ye_label}</div>
+          <div class="metric-ye-lbl">{ye_lbl_s}</div>
           <div class="metric-ye-val" style="color:{ye_color}">{ye_val}</div>
         </div>"""
 
     # ── 4-card layout ──────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(card(colors['primary'], colors['primary'], '1.8rem',
+        st.markdown(card(
+            "VOLUME",
+            colors['primary'], colors['primary'], '1.8rem',
             f"{total_closed:,}", closed_label, f"{start_month} – {last_month}",
             colors['primary'], f"{ye_closed:,}"), unsafe_allow_html=True)
     with c2:
-        bg, _ = ov_color(last_ov, t_hi, t_lo)
-        st.markdown(card(bg, bg, '1.8rem',
-            last_ov, "Open ≥90 Days (Snapshot)", f"As of end of {last_month}",
-            ye_ov_color, ye_ov90), unsafe_allow_html=True)
+        bg, _ = ov_color(last_ov_snap, t_hi, t_lo)
+        st.markdown(card(
+            "AGING — OPEN BACKLOG",
+            bg, bg, '1.8rem',
+            last_ov_snap,
+            "Currently Open >90 Days",
+            f"Snapshot: end of {last_month}",
+            ye_ov_color, ye_ov_snap,
+            f"{ye_label} snapshot (Dec 31)"), unsafe_allow_html=True)
     with c3:
-        st.markdown(f"""
-        <div class="metric-card" style="border-color:{trend_color}">
-          <div class="metric-val" style="color:{trend_color};font-size:1.8rem">{trend_display}</div>
-          <div class="metric-lbl">6-Month Trend (Open ≥90 Snapshot)</div>
-          <div class="metric-sub">{trend_sub}</div>
-          <div class="metric-divider"></div>
-          <div class="metric-ye-lbl">{ye_label}</div>
-          <div class="metric-ye-val" style="color:{ye_ov_color}">{ye_trend_lbl}</div>
-        </div>""", unsafe_allow_html=True)
+        bg3, _ = ov_color(total_closed_ov90, t_hi, t_lo)
+        st.markdown(card(
+            "AGING — CLOSED LATE",
+            bg3, bg3, '1.8rem',
+            total_closed_ov90,
+            "Closed Records That Took >90 Days",
+            f"{start_month} – {last_month}",
+            ye_cov_color, ye_closed_ov90,
+            f"{ye_label} count"), unsafe_allow_html=True)
     with c4:
-        st.markdown(f"""
-        <div class="metric-card" style="border-color:{colors['wavg']}">
-          <div class="metric-val" style="color:{colors['primary']};font-size:1.8rem">{cur_wavg}</div>
-          <div class="metric-lbl">Wtd Avg Days to Close</div>
-          <div class="metric-sub">{last_month} YTD running avg</div>
-          <div class="metric-divider"></div>
-          <div class="metric-ye-lbl">{ye_label}</div>
-          <div class="metric-ye-val" style="color:{colors['primary']}">{ye_wavg}</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(card(
+            "CYCLE TIME",
+            colors['wavg'], colors['primary'], '1.8rem',
+            cur_wavg,
+            "Wtd Avg Days to Close",
+            f"YTD running avg — resets Jan",
+            colors['primary'], ye_wavg), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════
 # CHART  (sliced to selected date range)
@@ -704,22 +706,22 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
     if show_split:
         fig.add_trace(go.Bar(
             x=slice_months, y=[r.get('ov90_car', 0) for r in sliced_metrics],
-            name="CARs Open ≥90", marker_color='#64748b', opacity=0.85,
+            name="CARs Open >90", marker_color='#64748b', opacity=0.85,
             marker_line_width=0,
-            hovertemplate="<b>%{x}</b><br>CARs ≥90: %{y}<extra></extra>"),
+            hovertemplate="<b>%{x}</b><br>CARs >90: %{y}<extra></extra>"),
             secondary_y=False)
         fig.add_trace(go.Bar(
             x=slice_months, y=[r.get('ov90_pto', 0) for r in sliced_metrics],
-            name="PTOs Open ≥90", marker_color='#94a3b8', opacity=0.85,
+            name="PTOs Open >90", marker_color='#94a3b8', opacity=0.85,
             marker_line_width=0,
-            hovertemplate="<b>%{x}</b><br>PTOs ≥90: %{y}<extra></extra>"),
+            hovertemplate="<b>%{x}</b><br>PTOs >90: %{y}<extra></extra>"),
             secondary_y=False)
     else:
         fig.add_trace(go.Bar(
-            x=slice_months, y=ov90, name="Open ≥90 Days",
+            x=slice_months, y=ov90, name="Open >90 Days",
             marker_color=colors['bar2'], opacity=0.8,
             marker_line_width=0,
-            hovertemplate="<b>%{x}</b><br>Open ≥90: %{y}<extra></extra>"),
+            hovertemplate="<b>%{x}</b><br>Open >90: %{y}<extra></extra>"),
             secondary_y=False)
 
     fig.add_trace(go.Scatter(
@@ -790,13 +792,13 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
 def monthly_table(sliced_metrics, sliced_wavg, extra_cols=None):
     rows = []
     for i, (m, r, w) in enumerate(zip(slice_months, sliced_metrics, sliced_wavg)):
-        row = {'Month': m, 'Closed': r['closed'], 'Open ≥90': r['ov90'], 'Wtd Avg': w}
+        row = {'Month': m, 'Closed': r['closed'], 'Open >90': r['ov90'], 'Wtd Avg': w}
         if extra_cols:
             row.update(extra_cols[i])
         rows.append(row)
     df = pd.DataFrame(rows)
     return (df.style
-              .format({'Open ≥90': '{:.0f}', 'Wtd Avg': '{:.0f}'}))
+              .format({'Open >90': '{:.0f}', 'Wtd Avg': '{:.0f}'}))
 
 # ══════════════════════════════════════════════════════════════════
 # TOP 20  (uses last month of sliced range)
@@ -804,7 +806,7 @@ def monthly_table(sliced_metrics, sliced_wavg, extra_cols=None):
 def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
     range_label = f"{start_month} – {slice_months[-1]}" if slice_months else all_months[-1]
     st.markdown(
-        f'<div class="section-hdr">⚠ &nbsp;Top 20 Locations — Open ≥90 Days &nbsp;'
+        f'<div class="section-hdr">⚠ &nbsp;Top 20 Locations — Open >90 Days &nbsp;'
         f'<span style="color:#8C1D18;font-weight:700">({range_label})</span></div>',
         unsafe_allow_html=True)
 
@@ -933,7 +935,7 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
         st.markdown('<div class="section-hdr">Monthly Breakdown</div>', unsafe_allow_html=True)
         extra = None
         if show_split:
-            extra = [{'CAR ≥90': r.get('ov90_car', 0), 'PTO ≥90': r.get('ov90_pto', 0)}
+            extra = [{'CAR >90': r.get('ov90_car', 0), 'PTO >90': r.get('ov90_pto', 0)}
                      for r in sliced_m]
         st.dataframe(monthly_table(sliced_m, sliced_w, extra_cols=extra),
                      use_container_width=True, hide_index=True,
@@ -1001,8 +1003,8 @@ with tab_combined:
             lm = loc_metrics.get(loc, [])
             s = lm[start_idx:end_idx + 1] if lm else []
             return sum(r['ov90'] for r in s) if s else 0
-        return [{'CAR ≥90': get_slice_ov(car_lm, i['loc']),
-                 'PTO ≥90': get_slice_ov(pto_lm, i['loc'])} for i in top20]
+        return [{'CAR >90': get_slice_ov(car_lm, i['loc']),
+                 'PTO >90': get_slice_ov(pto_lm, i['loc'])} for i in top20]
     render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
                D['cmb_t_hi'], D['cmb_t_lo'], D['cmb_top20'], 'Total Ov90',
                show_split=True, secondary_cols_fn=cmb_sec)
