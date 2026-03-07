@@ -174,7 +174,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         total_closed = sum(r['closed'] for r in slc)
         total_days   = sum(r['closed'] * r['avg_days'] for r in slc)
         wtd_avg      = int(round(total_days / total_closed)) if total_closed > 0 else 0
-        last_ov      = rows[end_i]['ov90'] if end_i < len(rows) else 0
+        last_ov      = rows[end_i]['ov90_ytd'] if end_i < len(rows) else 0
         return wtd_avg, last_ov, total_closed
 
     TABS = [

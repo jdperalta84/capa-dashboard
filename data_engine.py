@@ -259,12 +259,12 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
             mc   = c[c['close_month'] == m]
             cnt  = len(mc)
             avg  = int(round(mc['days2close'].mean())) if cnt > 0 else 0
-            # ov90_mo: closed THIS month AND took >= 90 days (monthly figure)
             ov90_mo  = int((mc['days2close'] >= 90).sum()) if cnt > 0 else 0
             ytd_ov90 += ov90_mo
             rows.append({'closed': cnt, 'avg_days': avg,
-                         'ov90':     ytd_ov90,   # YTD cumulative from Jan 1, resets each year
-                         'ov90_mo':  ov90_mo,    # raw monthly figure (kept for internal use)
+                         'ov90':     ov90_mo,    # monthly figure (used in table & chart)
+                         'ov90_ytd': ytd_ov90,   # YTD cumulative Jan 1 → this month
+                         'ov90_mo':  ov90_mo,    # alias kept for compatibility
                          'total_days': cnt * avg})
         return rows
 
@@ -280,16 +280,15 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
             c, p  = cd[i], pd_[i]
             total = c['closed'] + p['closed']
             avg   = int(round((c['total_days'] + p['total_days']) / total)) if total > 0 else 0
-            mo_ov90     = c['ov90_mo'] + p['ov90_mo']
-            ytd_ov90   += mo_ov90
-            mo_car_ov90 = c['ov90_mo']
-            mo_pto_ov90 = p['ov90_mo']
+            mo_ov90    = c['ov90_mo'] + p['ov90_mo']
+            ytd_ov90  += mo_ov90
             rows.append({'closed': total, 'avg_days': avg,
-                         'ov90':         ytd_ov90,
-                         'ov90_mo':      mo_ov90,
-                         'ov90_car':     mo_car_ov90,
-                         'ov90_pto':     mo_pto_ov90,
-                         'total_days':   c['total_days'] + p['total_days']})
+                         'ov90':     mo_ov90,    # monthly figure
+                         'ov90_ytd': ytd_ov90,  # YTD cumulative
+                         'ov90_mo':  mo_ov90,
+                         'ov90_car': c['ov90_mo'],
+                         'ov90_pto': p['ov90_mo'],
+                         'total_days': c['total_days'] + p['total_days']})
         return rows
 
     def running_wavg(rows):
