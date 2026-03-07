@@ -153,24 +153,38 @@ def _detect_format(source):
 
 
 def _read_list_source(source):
-    """Read List source sheet → {location: region} dict.
-    Returns None if sheet is absent or malformed."""
+    """Read List source sheet.
+    Returns (loc_region_dict, loc_id_dict) or (None, None) if absent/malformed.
+    loc_region_dict: {location_name: region}
+    loc_id_dict:     {location_name: location_id_str}
+    """
     try:
         if isinstance(source, io.BytesIO):
             source.seek(0)
-        ls       = pd.read_excel(source, sheet_name='List source', header=0)
-        # Be specific: 'Location' column (not 'CAR / PAR Area'), 'Area' column (not 'CAR Area')
-        loc_col  = next((c for c in ls.columns if str(c).strip() == 'Location'), None)                    or next((c for c in ls.columns if 'Location' in str(c) and 'Area' not in str(c) and 'ID' not in str(c)), None)
-        area_col = next((c for c in ls.columns if str(c).strip() == 'Area'), None)                    or next((c for c in ls.columns if str(c).strip().endswith('Area') and 'CAR' not in str(c) and 'PAR' not in str(c)), None)
+        ls = pd.read_excel(source, sheet_name='List source', header=0)
+        loc_col  = next((c for c in ls.columns if str(c).strip() == 'Location'), None)                    or next((c for c in ls.columns
+                            if 'Location' in str(c) and 'Area' not in str(c) and 'ID' not in str(c)), None)
+        area_col = next((c for c in ls.columns if str(c).strip() == 'Area'), None)                    or next((c for c in ls.columns
+                            if str(c).strip().endswith('Area')
+                            and 'CAR' not in str(c) and 'PAR' not in str(c)), None)
+        id_col   = next((c for c in ls.columns if str(c).strip() == 'Location ID'), None)                    or next((c for c in ls.columns if 'Location' in str(c) and 'ID' in str(c)), None)
         if not loc_col or not area_col:
-            return None
-        ls = ls[[loc_col, area_col]].dropna()
-        ls[loc_col]  = ls[loc_col].astype(str).str.strip()
-        ls[area_col] = ls[area_col].astype(str).str.strip()
-        ls = ls[(ls[area_col] != 'VOID') & (ls[loc_col] != '')]
-        return dict(zip(ls[loc_col], ls[area_col]))
+            return None, None
+        sub = ls[[loc_col, area_col] + ([id_col] if id_col else [])].copy()
+        sub[loc_col]  = sub[loc_col].astype(str).str.strip()
+        sub[area_col] = sub[area_col].astype(str).str.strip()
+        sub = sub[sub[loc_col].ne('') & sub[loc_col].ne('nan')]
+        sub = sub[sub[area_col].ne('VOID')]
+        loc_region = dict(zip(sub[loc_col], sub[area_col]))
+        loc_id = {}
+        if id_col:
+            sub[id_col] = sub[id_col].fillna('').astype(str).str.strip()
+            sub[id_col] = sub[id_col].str.replace(r'\.0$', '', regex=True)  # drop .0 from numeric IDs
+            loc_id = {row[loc_col]: row[id_col]
+                      for _, row in sub.iterrows() if row[id_col] not in ('', 'nan')}
+        return loc_region, loc_id
     except Exception:
-        return None
+        return None, None
 
 
 def _build_region_map(locations, loc_region_lookup):
@@ -351,6 +365,7 @@ def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=True):
     Both dfs must have: loc, init_date, close_date, days2close,
                         description (for VOID), initials (for JN PTOs)
     Returns (car_df, pto_df, all_locations, region_map)
+    all_locations includes EVERY valid location from List source (even zero-activity).
     """
     # 1. Remove VOID records
     car_df = car_df[~_is_void(car_df['description'])]
@@ -360,12 +375,13 @@ def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=True):
     if exclude_jn:
         pto_df = pto_df[~_is_jn(pto_df['initials'])]
 
-    # 3. Build region map from List source lookup
-    all_locs_raw = sorted(set(car_df['loc'].unique()) | set(pto_df['loc'].unique()))
-    all_locs_raw = [l for l in all_locs_raw if l not in ('nan', '', 'None')]
-    region_map   = _build_region_map(all_locs_raw, loc_region)
+    # 3. Build region map from ALL locations in List source (not just data)
+    #    This ensures zero-activity labs still appear in dropdowns and exports
+    all_locs_in_source = sorted(loc_region.keys())
+    all_locs_in_source = [l for l in all_locs_in_source if l not in ('nan', '', 'None')]
+    region_map = _build_region_map(all_locs_in_source, loc_region)
 
-    # 4. Keep only locations that have a valid (non-excluded) region
+    # 4. Keep only locations that have a valid (non-excluded) region in the region_map
     valid_locs = set(l for locs in region_map.values() for l in locs)
     car_df = car_df[car_df['loc'].isin(valid_locs)]
     pto_df = pto_df[pto_df['loc'].isin(valid_locs)]
@@ -396,7 +412,9 @@ def _load_master(source, exclude_jn=True):
     car = prep(car_raw)
     pto = prep(pto_raw)
 
-    loc_region   = _read_list_source(source) or LOCATION_REGION
+    _lr, _lid    = _read_list_source(source)
+    loc_region   = _lr  or LOCATION_REGION
+    loc_id_map   = _lid or {}
     car, pto, all_locations, region_map = _apply_exclusions(car, pto, loc_region, exclude_jn)
 
     car['close_month'] = car['close_date'].dt.to_period('M')
@@ -412,7 +430,7 @@ def _load_master(source, exclude_jn=True):
     data_end   = (pd.Timestamp.now() if pd.isna(_max_close) else max(_max_close, pd.Timestamp.now())).to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
 
-    return car, pto, months, all_locations, region_map
+    return car, pto, months, all_locations, region_map, loc_id_map
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -420,7 +438,9 @@ def _load_master(source, exclude_jn=True):
 # ══════════════════════════════════════════════════════════════════
 def _load_pivot(source, exclude_jn=True):
     # ── List source ───────────────────────────────────────────────
-    loc_region = _read_list_source(source) or LOCATION_REGION
+    _lr, _lid  = _read_list_source(source)
+    loc_region = _lr  or LOCATION_REGION
+    loc_id_map = _lid or {}
 
     # ── Detect sheet names dynamically ────────────────────────────
     if isinstance(source, io.BytesIO):
@@ -563,7 +583,7 @@ def _load_pivot(source, exclude_jn=True):
     data_end   = (pd.Timestamp.now() if pd.isna(_max_close) else max(_max_close, pd.Timestamp.now())).to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
 
-    return car, pto, months, all_locations, region_map
+    return car, pto, months, all_locations, region_map, loc_id_map
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -581,11 +601,12 @@ def load_and_compute(file_source, exclude_jn=True) -> dict:
     fmt = _detect_format(source)
 
     if fmt == 'master':
-        car, pto, months, all_locations, region_map = _load_master(source, exclude_jn)
+        car, pto, months, all_locations, region_map, loc_id_map = _load_master(source, exclude_jn)
     else:
-        car, pto, months, all_locations, region_map = _load_pivot(source, exclude_jn)
+        car, pto, months, all_locations, region_map, loc_id_map = _load_pivot(source, exclude_jn)
 
     result = _compute_metrics(car, pto, months, all_locations, region_map)
+    result['loc_id_map'] = loc_id_map
     result['loaded_at']   = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
     result['file_path']   = source_name
     result['file_format'] = fmt
@@ -608,6 +629,7 @@ def load_and_compute_multi(file_sources, exclude_jn=True) -> dict:
 
     all_car, all_pto = [], []
     combined_loc_region = {}
+    combined_loc_id = {}
     source_names = []
 
     for fs in file_sources:
@@ -622,17 +644,19 @@ def load_and_compute_multi(file_sources, exclude_jn=True) -> dict:
 
         fmt = _detect_format(source)
         if fmt == 'master':
-            car, pto, _, _, _ = _load_master(source, exclude_jn)
+            car, pto, _, _, _, _lid = _load_master(source, exclude_jn)
         else:
-            car, pto, _, _, _ = _load_pivot(source, exclude_jn)
+            car, pto, _, _, _, _lid = _load_pivot(source, exclude_jn)
 
         all_car.append(car)
         all_pto.append(pto)
 
-        # Merge loc→region from each file's List source
-        lr = _read_list_source(source)
-        if lr:
-            combined_loc_region.update(lr)
+        # Merge loc→region and loc→id from each file's List source
+        _lr, _lid = _read_list_source(source)
+        if _lr:
+            combined_loc_region.update(_lr)
+        if _lid:
+            combined_loc_id.update(_lid)
 
     car_combined = pd.concat(all_car, ignore_index=True)
     pto_combined = pd.concat(all_pto, ignore_index=True)
@@ -648,14 +672,16 @@ def load_and_compute_multi(file_sources, exclude_jn=True) -> dict:
     else:
         pto_combined = pto_combined.drop_duplicates(subset=['loc', 'init_date', 'close_date'])
 
-    # Rebuild region map from combined loc_region
+    # Rebuild region map from combined loc_region (all List source locs, not just data)
     if not combined_loc_region:
         combined_loc_region = LOCATION_REGION
+    if not combined_loc_id:
+        combined_loc_id = {}
 
-    all_locs_raw = sorted(
-        set(car_combined['loc'].unique()) | set(pto_combined['loc'].unique()))
-    all_locs_raw = [l for l in all_locs_raw if l not in ('nan', '', 'None')]
-    region_map   = _build_region_map(all_locs_raw, combined_loc_region)
+    # Use all locations from List source so zero-activity labs appear in UI
+    all_locs_in_source = sorted(k for k in combined_loc_region.keys()
+                                if k not in ('nan', '', 'None'))
+    region_map = _build_region_map(all_locs_in_source, combined_loc_region)
 
     valid_locs   = set(l for locs in region_map.values() for l in locs)
     car_combined = car_combined[car_combined['loc'].isin(valid_locs)]
@@ -678,4 +704,5 @@ def load_and_compute_multi(file_sources, exclude_jn=True) -> dict:
     result['file_path']   = ', '.join(source_names)
     result['file_format'] = 'multi'
     result['exclude_jn']  = exclude_jn
+    result['loc_id_map']  = combined_loc_id
     return result

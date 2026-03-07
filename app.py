@@ -266,6 +266,22 @@ region_map     = D['region_map']
 all_locations  = D['all_locations']
 all_months     = D['month_labels']
 NM             = len(all_months)
+loc_id_map     = D.get('loc_id_map', {})
+
+def loc_label(name):
+    """Return 'Location Name - ID' if ID available, else just name."""
+    lid = loc_id_map.get(name, '')
+    return f'{name} - {lid}' if lid else name
+
+def loc_from_label(label):
+    """Reverse loc_label — extract the location name from a display label."""
+    if not label or label == 'ALL':
+        return 'ALL'
+    # Strip trailing ' - ID' suffix if present
+    for name in all_locations:
+        if label == loc_label(name) or label == name:
+            return name
+    return label  # fallback
 
 region_options = ['ALL REGIONS'] + [f'[{r}]' for r in REGION_ORDER if r in region_map]
 
@@ -281,9 +297,12 @@ else:
     filtered_locs = sorted(region_map.get(rname, []))
     region_key    = f'REGION:{rname}'
 
+# Display labels include "- ID" suffix; data_key uses the plain name
+filtered_loc_labels = [loc_label(l) for l in filtered_locs]
 with location_placeholder:
-    selected_loc = st.selectbox("Location", ['ALL'] + filtered_locs,
-                                key="loc_sel", label_visibility="collapsed")
+    selected_loc_label = st.selectbox("Location", ['ALL'] + filtered_loc_labels,
+                                      key="loc_sel", label_visibility="collapsed")
+selected_loc = loc_from_label(selected_loc_label)
 
 data_key = region_key if selected_loc == 'ALL' else selected_loc
 
@@ -594,7 +613,7 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
 # ══════════════════════════════════════════════════════════════════
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════════
-title_loc = (selected_loc if selected_loc != 'ALL'
+title_loc = (selected_loc_label if selected_loc != 'ALL'
              else (selected_region if selected_region != 'ALL REGIONS' else 'All Locations'))
 
 # Context pill for region/location
@@ -602,7 +621,7 @@ if selected_loc != 'ALL':
     rname_display = selected_region.strip('[]') if selected_region != 'ALL REGIONS' else ''
     ctx_color = REGION_COLORS.get(rname_display, '#0550ae') if rname_display else '#0550ae'
     loc_pill = (f'<span style="background:{ctx_color}22;color:{ctx_color};padding:2px 10px;'
-                f'border-radius:20px;font-size:0.72rem;font-weight:600">{selected_loc}</span>')
+                f'border-radius:20px;font-size:0.72rem;font-weight:600">{selected_loc_label}</span>')
 elif selected_region != 'ALL REGIONS':
     rname_display = selected_region.strip('[]')
     ctx_color = REGION_COLORS.get(rname_display, '#0550ae')

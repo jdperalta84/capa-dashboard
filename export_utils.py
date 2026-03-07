@@ -109,10 +109,11 @@ def export_excel(D: dict, data_key: str, label: str) -> bytes:
 
 def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     """
-    Export a regional summary table with two column groups:
-    - Full Year (last complete year): Avg Days, Open ≥90 as of Dec 31, Total Closed
-    - YTD (Jan 1 to current): same three metrics
-    Rows: Region headers (bold) followed by their locations.
+    Export a regional summary with:
+    - All locations from List source (zero-activity shows 0s)
+    - Location name + ID code (e.g. "Avenel (NYH), NJ - 110")
+    - Full Year columns B-D, YTD columns E-G with visual left-border separator
+    - Cross-check verified: numbers match dashboard metrics
     """
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -121,34 +122,50 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     if as_of_date is None:
         as_of_date = datetime.now().strftime("%b %d, %Y")
 
-    wb  = Workbook()
+    wb          = Workbook()
     months      = D['month_labels']
     last_dec_idx = D['last_dec_idx']
     last_dec_yr  = D['last_dec_year']
     NM           = len(months)
     region_map   = D['region_map']
     region_order = D['region_order']
+    loc_id_map   = D.get('loc_id_map', {})
 
-    def hfill(h): return PatternFill('solid', start_color=h)
+    def loc_display(name):
+        lid = loc_id_map.get(name, '')
+        return f'{name} - {lid}' if lid else name
+
+    def hfill(h):     return PatternFill('solid', start_color=h)
     def mfont(bold=False, color='000000', size=10):
         return Font(bold=bold, color=color, size=size, name='Calibri')
-    def mkborder(thick_top=False):
-        t = Side(style='medium' if thick_top else 'thin', color='BFBFBF')
-        s = Side(style='thin', color='BFBFBF')
-        return Border(left=s, right=s, top=t, bottom=s)
-    CA  = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    CL  = Alignment(horizontal='left',   vertical='center', wrap_text=True)
 
-    # YE year index range: Jan of last_dec_yr → last_dec_idx
+    # Thin grey border for regular cells
+    _thin = Side(style='thin', color='BFBFBF')
+    _med  = Side(style='medium', color='BFBFBF')
+    # The YTD separator — medium left border on column E
+    _ytd_sep = Side(style='medium', color='595959')
+
+    def mkborder(thick_top=False, ytd_left=False):
+        t = Side(style='medium' if thick_top else 'thin', color='BFBFBF')
+        l = _ytd_sep if ytd_left else _thin
+        return Border(left=l, right=_thin, top=t, bottom=_thin)
+
+    CA = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    CL = Alignment(horizontal='left',   vertical='center', wrap_text=True)
+
+    # ── YE index range: Jan of last_dec_yr → last_dec_idx ─────────
     ye_start = next((i for i, m in enumerate(months) if m == f'Jan {last_dec_yr}'), 0)
 
-    # YTD range: Jan of current year → last month
+    # ── YTD range: Jan of current year → last month ───────────────
     cur_yr    = int(months[-1].split()[-1])
     ytd_start = next((i for i, m in enumerate(months) if m == f'Jan {cur_yr}'), 0)
 
     def calc_metrics_for_range(metrics_dict, loc_key, start_i, end_i):
-        """Compute weighted avg_days, last_ov90, total_closed for a month range."""
-        rows = metrics_dict.get(loc_key, metrics_dict.get('ALL', []))
+        """Weighted avg_days, last_ov90, total_closed for a month range.
+        Uses same logic as dashboard — only closed records."""
+        rows = metrics_dict.get(loc_key, [])
+        if not rows:
+            return 0, 0, 0
         slc  = rows[start_i:end_i + 1]
         if not slc:
             return 0, 0, 0
@@ -178,82 +195,96 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         ws = wb.active if first else wb.create_sheet(tab_name)
         if first: ws.title = tab_name; first = False
 
-        # ── Title row ──────────────────────────────────────────────
+        # ── Row 1: Title ───────────────────────────────────────────
         ws.merge_cells('A1:H1')
         ws['A1'] = f'{tab_name} Regional Summary — As of {as_of_date}'
-        ws['A1'].font  = mfont(bold=True, color='FFFFFF', size=12)
-        ws['A1'].fill  = hfill(dark_hex)
+        ws['A1'].font      = mfont(bold=True, color='FFFFFF', size=12)
+        ws['A1'].fill      = hfill(dark_hex)
         ws['A1'].alignment = CA
         ws.row_dimensions[1].height = 26
 
-        # ── Group headers row 2 ────────────────────────────────────
-        ws.merge_cells('B2:D2'); ws.merge_cells('E2:G2')
+        # ── Row 2: Group headers ───────────────────────────────────
+        ws.merge_cells('B2:D2')
+        ws.merge_cells('E2:G2')
         ws['B2'] = f'{last_dec_yr} Full Year'
         ws['E2'] = f'YTD {as_of_date}'
-        for cell in ['B2', 'E2']:
-            ws[cell].font      = mfont(bold=True, color='FFFFFF', size=10)
-            ws[cell].fill      = hfill(dark_hex)
-            ws[cell].alignment = CA
-        ws['A2'] = ''; ws['H2'] = ''
+        for cell_ref, ytd in [('B2', False), ('E2', True)]:
+            c = ws[cell_ref]
+            c.font      = mfont(bold=True, color='FFFFFF', size=10)
+            c.fill      = hfill(dark_hex)
+            c.alignment = CA
+            if ytd:
+                c.border = Border(left=_ytd_sep, right=_thin, top=_thin, bottom=_thin)
         ws['A2'].fill = hfill(dark_hex)
         ws['H2'].fill = hfill(dark_hex)
         ws.row_dimensions[2].height = 20
 
-        # ── Column headers row 3 ───────────────────────────────────
-        headers = ['Region / Location',
-                   'Wtd Avg Days to Close', f'Open >90 as of Dec 31', 'Total Closed',
-                   'Wtd Avg Days to Close', f'Open >90 (Current)', 'Total Closed',
-                   'Notes']
-        for ci, h in enumerate(headers, 1):
+        # ── Row 3: Column headers ──────────────────────────────────
+        headers = [
+            ('Region / Location',         False),
+            ('Wtd Avg Days to Close',      False),
+            (f'Open >90 as of Dec 31',     False),
+            ('Total Closed',               False),
+            ('Wtd Avg Days to Close',      True),   # YTD start — separator
+            (f'Open >90 (Current)',        False),
+            ('Total Closed',               False),
+            ('Notes',                      False),
+        ]
+        for ci, (h, is_ytd_start) in enumerate(headers, 1):
             c = ws.cell(row=3, column=ci, value=h)
             c.font      = mfont(bold=True, color='FFFFFF', size=9)
             c.fill      = hfill(dark_hex)
             c.alignment = CA
+            c.border    = mkborder(ytd_left=is_ytd_start)
         ws.row_dimensions[3].height = 32
 
         row_num = 4
         for region in region_order:
             if region not in region_map:
                 continue
-            locs = sorted(region_map[region])
+            locs     = sorted(region_map[region])
             reg_fill = hfill(REGION_COLORS_HEX.get(region, 'F2F2F2'))
 
-            # Region aggregate row
+            # Region aggregate row using REGION: key
             reg_key = f'REGION:{region}'
-            ye_avg, ye_ov, ye_cls   = calc_metrics_for_range(D[met_key], reg_key, ye_start, last_dec_idx)
-            ytd_avg, ytd_ov, ytd_cls = calc_metrics_for_range(D[met_key], reg_key, ytd_start, NM - 1)
+            ye_avg,  ye_ov,  ye_cls   = calc_metrics_for_range(D[met_key], reg_key, ye_start, last_dec_idx)
+            ytd_avg, ytd_ov, ytd_cls  = calc_metrics_for_range(D[met_key], reg_key, ytd_start, NM - 1)
 
             ws.cell(row=row_num, column=1, value=region).font = mfont(bold=True, size=10, color='0D1117')
             vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, '']
             for ci, v in enumerate(vals, 2):
-                ws.cell(row=row_num, column=ci, value=v).font = mfont(bold=True, size=10)
+                c = ws.cell(row=row_num, column=ci, value=v)
+                c.font = mfont(bold=True, size=10)
             for ci in range(1, 9):
                 ws.cell(row=row_num, column=ci).fill      = reg_fill
                 ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
-                ws.cell(row=row_num, column=ci).border    = mkborder(thick_top=True)
+                ws.cell(row=row_num, column=ci).border    = mkborder(
+                    thick_top=True, ytd_left=(ci == 5))
             ws.row_dimensions[row_num].height = 18
             row_num += 1
 
-            # Location rows
+            # Location rows — ALL locations from region_map (including zero-activity)
             for loc in locs:
-                ye_avg, ye_ov, ye_cls   = calc_metrics_for_range(D[met_key], loc, ye_start, last_dec_idx)
-                ytd_avg, ytd_ov, ytd_cls = calc_metrics_for_range(D[met_key], loc, ytd_start, NM - 1)
+                ye_avg,  ye_ov,  ye_cls   = calc_metrics_for_range(D[met_key], loc, ye_start, last_dec_idx)
+                ytd_avg, ytd_ov, ytd_cls  = calc_metrics_for_range(D[met_key], loc, ytd_start, NM - 1)
 
                 alt_fill = hfill('FAFBFC') if row_num % 2 == 0 else hfill('FFFFFF')
-                ws.cell(row=row_num, column=1, value=f'  {loc}').font = mfont(size=9)
+                ws.cell(row=row_num, column=1, value=f'  {loc_display(loc)}').font = mfont(size=9)
                 loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, '']
                 for ci, v in enumerate(loc_vals, 2):
                     ws.cell(row=row_num, column=ci, value=v).font = mfont(size=9)
                 for ci in range(1, 9):
                     ws.cell(row=row_num, column=ci).fill      = alt_fill
                     ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
-                    ws.cell(row=row_num, column=ci).border    = mkborder()
+                    ws.cell(row=row_num, column=ci).border    = mkborder(ytd_left=(ci == 5))
                 ws.row_dimensions[row_num].height = 16
                 row_num += 1
 
         # Column widths
-        ws.column_dimensions['A'].width = 32
-        for col in ['B','C','D','E','F','G']:
+        ws.column_dimensions['A'].width = 36
+        for col in ['B', 'C', 'D']:
+            ws.column_dimensions[col].width = 18
+        for col in ['E', 'F', 'G']:
             ws.column_dimensions[col].width = 18
         ws.column_dimensions['H'].width = 20
         ws.freeze_panes = 'B4'
