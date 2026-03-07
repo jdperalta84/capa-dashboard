@@ -7,7 +7,7 @@ from datetime import datetime
 import io
 
 from data_engine import load_and_compute, REGION_ORDER, REGION_COLORS
-from export_utils import export_excel, export_regional_summary
+from export_utils import export_regional_summary
 
 st.set_page_config(page_title="CAPA · PTO Dashboard", page_icon="📋",
                    layout="wide", initial_sidebar_state="expanded")
@@ -198,8 +198,10 @@ with st.sidebar:
     date_start_ph = st.empty()
     date_end_ph   = st.empty()
 
+    st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
+    exclude_jn = st.toggle("Exclude JN PTOs", value=True)
+
     st.markdown('<div class="sidebar-section">Export</div>', unsafe_allow_html=True)
-    export_btn     = st.button("↓  Monthly Detail (Excel)", use_container_width=True)
     export_reg_btn = st.button("↓  Regional Summary (Excel)", use_container_width=True)
     st.markdown("""
     <div style="font-size:0.65rem;color:#484f58;margin-top:0.3rem;line-height:1.5">
@@ -214,18 +216,20 @@ with st.sidebar:
 # LOAD DATA
 # ══════════════════════════════════════════════════════════════════
 @st.cache_data(show_spinner="Computing metrics…")
-def get_data(file_bytes):
-    return load_and_compute(io.BytesIO(file_bytes))
+def get_data(file_bytes, exclude_jn=True):
+    return load_and_compute(io.BytesIO(file_bytes), exclude_jn=exclude_jn)
 
 if uploaded_files:
     file_bytes = uploaded_files[0].read()
-    file_hash = hash(file_bytes)
+    file_hash  = hash(file_bytes)
+    jn_changed = st.session_state.get("exclude_jn") != exclude_jn
     if ("data" not in st.session_state
             or st.session_state.get("file_hash") != file_hash
-            or load_btn):
+            or load_btn or jn_changed):
+        st.session_state.exclude_jn = exclude_jn
         try:
             get_data.clear()
-            st.session_state.data = get_data(file_bytes)
+            st.session_state.data = get_data(file_bytes, exclude_jn)
             st.session_state.file_hash = file_hash
             st.session_state.filename = uploaded_files[0].name
         except Exception as e:
@@ -703,13 +707,6 @@ with tab_combined:
                show_split=True, secondary_cols_fn=cmb_sec)
 
 # ── Export ────────────────────────────────────────────────────────
-if export_btn:
-    buf = export_excel(D, data_key, title_loc)
-    st.sidebar.download_button(
-        "⬇ Download Monthly Detail", buf,
-        file_name=f"CAPA_Monthly_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
 if export_reg_btn:
     buf = export_regional_summary(D, as_of_date=datetime.now().strftime("%b %d, %Y"))
     st.sidebar.download_button(

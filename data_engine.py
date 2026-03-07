@@ -1,9 +1,17 @@
 """
 data_engine.py
 Auto-detects file format:
-  - MASTER format: output of merge.py (Data - CARs / Data - PTOs with normalized columns)
+  - MASTER format: output of merge.py (Data - CARs / Data - PTOs, normalized columns)
   - PIVOT  format: legacy monthly snapshot file (Data - CARs / Open data - PTOs)
 Both formats produce the identical output dict consumed by app.py.
+
+EXCLUSION RULES (applied in both pipelines):
+  - Only CLOSED dates drive all metrics (avg days, closed count, open >=90 snapshot)
+  - VOID records excluded (description contains 'VOID')
+  - Corporate, Agri, Environmental, Unassigned regions excluded entirely
+  - PARs and CAFs excluded (CARs and PTOs only)
+  - JN PTOs: toggled via exclude_jn parameter (default True), NOT hardcoded
+  - Region map always read from List source sheet of uploaded file
 """
 
 import io
@@ -12,115 +20,104 @@ import numpy as np
 from pathlib import Path
 
 
-REGION_ORDER = ['USWC', 'USGC', 'USNE', 'USMW & River', 'USMA & Carib', 'Canada',
-                'NAM/Chem', 'NAM/LPG', 'Corporate', 'Environmental', 'ADD/Calib', 'Agri']
+# ── Region display order & colors ─────────────────────────────────
+REGION_ORDER = ['USWC', 'USGC', 'USNE', 'USMW & River', 'USMA & Carib',
+                'Canada', 'NAM/Chem', 'NAM/LPG', 'ADD/Calib',
+                # Legacy region names from older pivot files
+                'USNE, USMW & Canada', 'SE & Caribbean', 'Calibration']
 
 REGION_COLORS = {
-    'USWC':          '#2E86C1',
-    'USGC':          '#CA6F1E',
-    'USNE':          '#28B463',
-    'USMW & River':  '#A569BD',
-    'USMA & Carib':  '#16A085',
-    'Canada':        '#8E44AD',
-    'NAM/Chem':      '#D35400',
-    'NAM/LPG':       '#27AE60',
-    'Corporate':     '#566573',
-    'Environmental': '#1ABC9C',
-    'ADD/Calib':     '#C0392B',
-    'Agri':          '#F39C12',
+    'USWC':                '#2E86C1',
+    'USGC':                '#CA6F1E',
+    'USNE':                '#28B463',
+    'USMW & River':        '#A569BD',
+    'USMA & Carib':        '#16A085',
+    'Canada':              '#8E44AD',
+    'NAM/Chem':            '#D35400',
+    'NAM/LPG':             '#27AE60',
+    'ADD/Calib':           '#C0392B',
+    # Legacy
+    'USNE, USMW & Canada': '#28B463',
+    'SE & Caribbean':      '#16A085',
+    'Calibration':         '#C0392B',
 }
 
-# Full location → region lookup (updated from List source v3)
-# Add new locations here as labs expand internationally
+# Regions excluded entirely from all metrics
+EXCLUDE_REGIONS = {'Corporate', 'Agri', 'Environmental', 'Unassigned', 'VOID'}
+
+# Fallback hardcoded location→region (only used if List source sheet is missing)
 LOCATION_REGION = {
-    "A&B Labs - Baton Rouge, LA":          "Environmental",
-    "A&B Labs - Houston, TX":              "Environmental",
-    "A&B Labs - Nederland, TX":            "Environmental",
-    "A&B Labs - Tempe, AZ":               "Environmental",
-    "AGRI (HTC)":                          "USGC",
-    "Additives East Coast":                "ADD/Calib",
-    "Additives Gulf Coast":                "ADD/Calib",
-    "Albany, NY":                          "USNE",
-    "Avenel (NYH), NJ":                    "USNE",
-    "Bahamas (Freeport), GBI":             "USMA & Carib",
-    "Baltimore (Glen Burnie), MD":         "USMA & Carib",
-    "Baton Rouge (Gonzales), LA":          "USMW & River",
-    "Baytown, TX":                         "USGC",
-    "Belle Chasse, LA":                    "USMW & River",
-    "Bellingham (Ferndale), WA":           "USWC",
-    "Bostco, TX":                          "USGC",
-    "Boston (Everett), MA":                "USNE",
-    "Boucherville, QC":                    "Agri",
-    "Brownsville, TX":                     "USGC",
-    "CORPORATE, NJ":                       "Corporate",
-    "Cameron LNG":                         "Unassigned",
-    "Cape Canaveral, FL":                  "USMA & Carib",
-    "Chicago, IL":                         "USMW & River",
-    "Cincinnati (Erlanger), OH":           "USMW & River",
-    "Collins (Purvis), MS":                "USMW & River",
-    "Corpus Christi, TX":                  "USGC",
-    "Corpus Christi, TX (CITGO Lab)":      "USGC",
-    "Cushing, OK":                         "USGC",
-    "Decatur, AL":                         "USMW & River",
-    "Freeport, TX":                        "USGC",
-    "Ft Lauderdale (Davie), FL":           "USMA & Carib",
-    "HOFTI / Channelview, TX":             "USGC",
-    "HST Weights & Measures":              "ADD/Calib",
-    "HTC LPG":                             "NAM/LPG",
-    "Halifax (Dartmouth), NS":             "Canada",
-    "Hamilton (Burlington), ON":           "Canada",
-    "Houston (HTC), TX":                   "USGC",
-    "Ingleside, TX":                       "USGC",
-    "Kenai, AK":                           "USWC",
-    "Kenner, LA":                          "Agri",
-    "Lake Charles (Sulfur), LA":           "USGC",
-    "Levis (Quebec City), Quebec":         "Canada",
-    "Los Angeles (Signal Hill), CA":       "USWC",
-    "Marcus Hook, PA":                     "NAM/LPG",
-    "Memphis, TN":                         "USMW & River",
-    "Mickleton (Philly), NJ":              "USMA & Carib",
-    "Midland, TX":                         "USGC",
-    "Minot, ND":                           "USGC",
-    "Mobile, AL":                          "USMW & River",
-    "Mont Belvieu, TX":                    "NAM/LPG",
-    "Montreal, QC":                        "Canada",
-    "New Haven, CT":                       "USNE",
-    "New Orleans (Destrehan), LA":         "USMW & River",
-    "Newfoundland (Arnold's Cove)":        "Canada",
-    "Pecos (West Texas), TX":              "USGC",
-    "Phoenix, AZ":                         "USWC",
-    "Pittsburgh, PA":                      "USMW & River",
-    "Port Arthur (Beaumont), TX":          "USGC",
+    "AGRI (HTC)":                            "USGC",
+    "Albany, NY":                            "USNE",
+    "Avenel (NYH), NJ":                      "USNE",
+    "Bahamas (Freeport), GBI":               "USMA & Carib",
+    "Baltimore (Glen Burnie), MD":           "USMA & Carib",
+    "Baton Rouge (Gonzales), LA":            "USMW & River",
+    "Baytown, TX":                           "USGC",
+    "Belle Chasse, LA":                      "USMW & River",
+    "Bellingham (Ferndale), WA":             "USWC",
+    "Bostco, TX":                            "USGC",
+    "Boston (Everett), MA":                  "USNE",
+    "Brownsville, TX":                       "USGC",
+    "Cape Canaveral, FL":                    "USMA & Carib",
+    "Chicago, IL":                           "USMW & River",
+    "Cincinnati (Erlanger), OH":             "USMW & River",
+    "Collins (Purvis), MS":                  "USMW & River",
+    "Corpus Christi, TX":                    "USGC",
+    "Corpus Christi, TX (CITGO Lab)":        "USGC",
+    "Cushing, OK":                           "USGC",
+    "Decatur, AL":                           "USMW & River",
+    "Freeport, TX":                          "USGC",
+    "Ft Lauderdale (Davie), FL":             "USMA & Carib",
+    "HOFTI / Channelview, TX":               "USGC",
+    "HST Weights & Measures":               "ADD/Calib",
+    "HTC LPG":                               "NAM/LPG",
+    "Halifax (Dartmouth), NS":               "Canada",
+    "Hamilton (Burlington), ON":             "Canada",
+    "Houston (HTC), TX":                     "USGC",
+    "Ingleside, TX":                         "USGC",
+    "Kenai, AK":                             "USWC",
+    "Lake Charles (Sulfur), LA":             "USGC",
+    "Levis (Quebec City), Quebec":           "Canada",
+    "Los Angeles (Signal Hill), CA":         "USWC",
+    "Marcus Hook, PA":                       "NAM/LPG",
+    "Memphis, TN":                           "USMW & River",
+    "Mickleton (Philly), NJ":               "USMA & Carib",
+    "Midland, TX":                           "USGC",
+    "Minot, ND":                             "USGC",
+    "Mobile, AL":                            "USMW & River",
+    "Mont Belvieu, TX":                      "NAM/LPG",
+    "Montreal, QC":                          "Canada",
+    "New Haven, CT":                         "USNE",
+    "New Orleans (Destrehan), LA":           "USMW & River",
+    "Newfoundland (Arnold's Cove)":          "Canada",
+    "Pecos (West Texas), TX":               "USGC",
+    "Phoenix, AZ":                           "USWC",
+    "Pittsburgh, PA":                        "USMW & River",
+    "Port Arthur (Beaumont), TX":            "USGC",
     "Port Arthur (Sabine Blending Lab), TX": "USGC",
-    "Port Lavaca, TX":                     "USGC",
-    "Portland, ME":                        "USNE",
-    "Providence, RI":                      "USNE",
-    "Puerto Rico":                         "USMA & Carib",
-    "San Francisco (Concord), CA":         "USWC",
-    "Santurce, Puerto Rico":               "Unassigned",
-    "Savannah, GA / Charleston, SC":       "USMA & Carib",
-    "Seabrook (Chemicals), TX":            "NAM/Chem",
-    "Specialty":                           "Unassigned",
-    "St Croix, USVI":                      "USMA & Carib",
-    "St James, LA":                        "USMW & River",
-    "St John, NB":                         "Canada",
-    "St Louis, MO":                        "USMW & River",
-    "Tacoma, WA":                          "USWC",
-    "Tampa, FL":                           "USMA & Carib",
-    "Texas City, TX":                      "USGC",
-    "Utah":                                "Unassigned",
-    "Valdez, AK":                          "USWC",
-    "Warehouse":                           "ADD/Calib",
-    "Yorktown (Norfolk), VA":              "USMA & Carib",
+    "Port Lavaca, TX":                       "USGC",
+    "Portland, ME":                          "USNE",
+    "Providence, RI":                        "USNE",
+    "Puerto Rico":                           "USMA & Carib",
+    "San Francisco (Concord), CA":           "USWC",
+    "Savannah, GA / Charleston, SC":         "USMA & Carib",
+    "Seabrook (Chemicals), TX":              "NAM/Chem",
+    "St Croix, USVI":                        "USMA & Carib",
+    "St James, LA":                          "USMW & River",
+    "St John, NB":                           "Canada",
+    "St Louis, MO":                          "USMW & River",
+    "Tacoma, WA":                            "USWC",
+    "Tampa, FL":                             "USMA & Carib",
+    "Texas City, TX":                        "USGC",
+    "Valdez, AK":                            "USWC",
+    "Yorktown (Norfolk), VA":                "USMA & Carib",
 }
 
-SKIP_LOCS = ['A&B Labs', 'VOIDED', 'Extras', 'Warehouse', 'Additives',
-             'Utah', 'Cameron', 'Specialty', 'Kenner', 'Santurce', 'Boucherville']
 
-# Regions excluded from CARs and PTOs metrics entirely
-EXCLUDE_REGIONS = {'Corporate'}
-
-
+# ══════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════
 def _read_source(source, sheet_name, header=0):
     if isinstance(source, io.BytesIO):
         source.seek(0)
@@ -130,91 +127,86 @@ def _read_source(source, sheet_name, header=0):
 def _detect_format(source):
     if isinstance(source, io.BytesIO):
         source.seek(0)
-    xl = pd.read_excel(source, sheet_name=None, nrows=2)
+    xl     = pd.read_excel(source, sheet_name=None, nrows=2)
     sheets = list(xl.keys())
-    # Legacy pivot format: sheets contain both CAR and PTO (but not Data - CARs)
-    if any('CAR' in name for name in sheets) and any('PTO' in name for name in sheets) and not any('Data - CARs' in name for name in sheets):
-        return 'pivot'
-    # Master format: Data - CARs with columns
     if 'Data - CARs' in sheets:
-        cols = [str(c).strip() for c in xl['Data - CARs'].columns]
+        cols = [str(c).strip().lower() for c in xl['Data - CARs'].columns]
         if 'car_number' in cols or 'location' in cols:
             return 'master'
-    # Master old style: sheets starting with CAR and PTO
-    if any(name.startswith('CAR') for name in sheets) and any(name.startswith('PTO') for name in sheets):
-        return 'master'
-    # Pivot old style
-    if any(name.startswith('CAF') for name in sheets) or any(name.startswith('Assessment') for name in sheets):
-        return 'pivot'
-    # Pivot new style
     if 'Open data - PTOs' in sheets:
         return 'pivot'
-    # Fallback
     if 'Data - CARs' in sheets:
-        cols = [str(c).strip() for c in xl['Data - CARs'].columns]
-        if any('Location' in c for c in cols):
-            return 'pivot'
-    raise ValueError(f"Unrecognised file format. Sheets found: {sheets}")
+        return 'pivot'
+    raise ValueError(f"Unrecognised file format. Sheets: {sheets}")
 
 
 def _read_list_source(source):
-    """Read List source sheet if present, return {location: region} dict or None."""
+    """Read List source sheet → {location: region} dict.
+    Returns None if sheet is absent or malformed."""
     try:
         if isinstance(source, io.BytesIO):
             source.seek(0)
-        ls = pd.read_excel(source, sheet_name='List source', header=0)
-        # Find location and area columns flexibly
+        ls       = pd.read_excel(source, sheet_name='List source', header=0)
         loc_col  = next((c for c in ls.columns if 'Location' in str(c)), None)
-        area_col = next((c for c in ls.columns if 'Area' in str(c)), None)
+        area_col = next((c for c in ls.columns if 'Area'     in str(c)), None)
         if not loc_col or not area_col:
             return None
         ls = ls[[loc_col, area_col]].dropna()
         ls[loc_col]  = ls[loc_col].astype(str).str.strip()
         ls[area_col] = ls[area_col].astype(str).str.strip()
-        ls = ls[ls[area_col] != 'VOID']
-        ls = ls[~ls[loc_col].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
+        ls = ls[(ls[area_col] != 'VOID') & (ls[loc_col] != '')]
         return dict(zip(ls[loc_col], ls[area_col]))
     except Exception:
         return None
 
 
-def _build_region_map(locations, loc_region_override=None):
-    """Build region_map from List source override or LOCATION_REGION fallback.
-    Excludes any region in EXCLUDE_REGIONS."""
-    lookup = loc_region_override if loc_region_override else LOCATION_REGION
+def _build_region_map(locations, loc_region_lookup):
+    """Map locations → regions, skipping EXCLUDE_REGIONS.
+    loc_region_lookup: dict from List source (or fallback LOCATION_REGION)."""
     region_map = {}
     for loc in locations:
-        region = lookup.get(loc)
+        region = loc_region_lookup.get(loc)
         if region is None:
-            # Try partial match for flexibility
-            for known_loc, known_region in lookup.items():
-                if known_loc.lower() in loc.lower() or loc.lower() in known_loc.lower():
-                    region = known_region
+            # Partial match fallback
+            for k, v in loc_region_lookup.items():
+                if k.lower() in loc.lower() or loc.lower() in k.lower():
+                    region = v
                     break
-        if region is None:
-            region = 'Other'
-        if region in EXCLUDE_REGIONS:
-            continue  # Skip excluded regions entirely
+        if region is None or region in EXCLUDE_REGIONS:
+            continue
         region_map.setdefault(region, []).append(loc)
     return region_map
 
 
+def _is_void(series):
+    """Return boolean mask — True where record description contains VOID."""
+    return series.astype(str).str.upper().str.contains('VOID', na=False)
+
+
+def _is_jn(series):
+    """Return boolean mask — True where initials are JN (case-insensitive)."""
+    return series.astype(str).str.strip().str.upper() == 'JN'
+
+
 # ══════════════════════════════════════════════════════════════════
 # SHARED METRIC ENGINE
-# (used by both format pipelines once data is normalised)
 # ══════════════════════════════════════════════════════════════════
-def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
-                     months, all_locations, region_map):
-
-    NM = len(months)
+def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
+    """
+    All metrics derived from CLOSED records only.
+      - avg_days / total_closed: records whose close_date falls in that month
+      - ov90: records closed in that month whose days2close >= 90
+              (i.e. took 90+ days from init to close)
+    Running weighted avg resets each January.
+    """
+    NM           = len(months)
     month_labels = [m.strftime('%b %Y') for m in months]
 
-    # Year-end indices
     year_end_indices = {m.year: i for i, m in enumerate(months) if m.month == 12}
-    last_dec_year = max(year_end_indices.keys()) if year_end_indices else None
-    last_dec_idx  = year_end_indices.get(last_dec_year, NM - 1)
-    prev_dec_year = last_dec_year - 1 if last_dec_year else None
-    prev_dec_idx  = year_end_indices.get(prev_dec_year, None)
+    last_dec_year    = max(year_end_indices.keys()) if year_end_indices else None
+    last_dec_idx     = year_end_indices.get(last_dec_year, NM - 1)
+    prev_dec_year    = last_dec_year - 1 if last_dec_year else None
+    prev_dec_idx     = year_end_indices.get(prev_dec_year, None)
 
     def filter_df(df, loc_key):
         if loc_key == 'ALL':
@@ -223,34 +215,28 @@ def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
             return df[df['loc'].isin(region_map.get(loc_key[7:], []))]
         return df[df['loc'] == loc_key]
 
-    def calc(closed_df, open_df, loc_key):
-        c = filter_df(closed_df, loc_key)
-        o = filter_df(open_df,   loc_key)
+    def calc(closed_df, loc_key):
+        c    = filter_df(closed_df, loc_key)
         rows = []
         for m in months:
-            mc  = c[c['close_month'] == m]
-            cnt = len(mc)
-            avg = int(round(mc['days2close'].mean())) if cnt > 0 else 0
-            me  = m.to_timestamp('M')
-            oe_c = c[(c['init_date'] <= me) & (c['close_date'] > me)]
-            oe_o = o[o['init_date'] <= me]
-            all_open = pd.concat([oe_c[['init_date']], oe_o[['init_date']]])
-            all_open['days'] = (me - all_open['init_date']).dt.days
-            ov90 = int((all_open['days'] >= 90).sum())
+            mc   = c[c['close_month'] == m]
+            cnt  = len(mc)
+            avg  = int(round(mc['days2close'].mean())) if cnt > 0 else 0
+            # ov90: closed this month AND took >= 90 days
+            ov90 = int((mc['days2close'] >= 90).sum()) if cnt > 0 else 0
             rows.append({'closed': cnt, 'avg_days': avg, 'ov90': ov90,
                          'total_days': cnt * avg})
         return rows
 
     def calc_combined(loc_key):
-        cd = car_metrics[loc_key]
-        pd_ = pto_metrics[loc_key]
+        cd, pd_ = car_metrics[loc_key], pto_metrics[loc_key]
         rows = []
         for i in range(NM):
             c, p  = cd[i], pd_[i]
             total = c['closed'] + p['closed']
             avg   = int(round((c['total_days'] + p['total_days']) / total)) if total > 0 else 0
             rows.append({'closed': total, 'avg_days': avg,
-                         'ov90': c['ov90'] + p['ov90'],
+                         'ov90':     c['ov90'] + p['ov90'],
                          'ov90_car': c['ov90'], 'ov90_pto': p['ov90'],
                          'total_days': c['total_days'] + p['total_days']})
         return rows
@@ -265,12 +251,13 @@ def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
             result.append(int(round(cum_days / cum_cls)) if cum_cls > 0 else 0)
         return result
 
-    region_keys = [f'REGION:{r}' for r in REGION_ORDER if r in region_map]
+    # Build region keys from actual region_map (not hardcoded REGION_ORDER)
+    region_keys = [f'REGION:{r}' for r in region_map.keys()]
     all_keys    = ['ALL'] + region_keys + all_locations
 
-    car_metrics = {k: calc(car_closed, car_open, k) for k in all_keys}
-    pto_metrics = {k: calc(pto_closed, pto_open, k) for k in all_keys}
-    cmb_metrics = {k: calc_combined(k) for k in all_keys}
+    car_metrics = {k: calc(car_closed, k) for k in all_keys}
+    pto_metrics = {k: calc(pto_closed, k) for k in all_keys}
+    cmb_metrics = {k: calc_combined(k)    for k in all_keys}
 
     car_wavg = {k: running_wavg(car_metrics[k]) for k in all_keys}
     pto_wavg = {k: running_wavg(pto_metrics[k]) for k in all_keys}
@@ -297,6 +284,8 @@ def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
 
     def thresholds(stats):
         vals = [stats[l]['last_ov'] for l in all_locations]
+        if not vals:
+            return 10, 5
         return int(np.percentile(vals, 66)), int(np.percentile(vals, 33))
 
     car_t_hi, car_t_lo = thresholds(car_stats)
@@ -309,6 +298,14 @@ def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
                  'avg_ov': stats[l]['avg_ov'],
                  'total_closed': stats[l]['total_closed']} for l in ranked]
 
+    # Dynamic region_order: only regions present in data, in preferred order
+    preferred = ['USWC', 'USGC', 'USNE', 'USMW & River', 'USMA & Carib',
+                 'Canada', 'NAM/Chem', 'NAM/LPG', 'ADD/Calib',
+                 'USNE, USMW & Canada', 'SE & Caribbean', 'Calibration']
+    active_regions  = list(region_map.keys())
+    region_order_out = [r for r in preferred if r in active_regions] + \
+                       [r for r in active_regions if r not in preferred]
+
     return {
         'car_metrics': car_metrics, 'pto_metrics': pto_metrics, 'cmb_metrics': cmb_metrics,
         'car_wavg':    car_wavg,    'pto_wavg':    pto_wavg,    'cmb_wavg':    cmb_wavg,
@@ -319,203 +316,210 @@ def _compute_metrics(car_closed, car_open, pto_closed, pto_open,
         'car_top20': top20(car_stats),
         'pto_top20': top20(pto_stats),
         'cmb_top20': top20(cmb_stats),
-        'month_labels':      month_labels,
-        'last_dec_idx':      last_dec_idx,
-        'last_dec_year':     last_dec_year,
-        'prev_dec_idx':      prev_dec_idx,
-        'prev_dec_year':     prev_dec_year,
-        'year_end_indices':  year_end_indices,
-        'all_locations':     all_locations,
-        'region_map':        region_map,
-        'region_order':      REGION_ORDER,
-        'region_colors':     REGION_COLORS,
+        'month_labels':     month_labels,
+        'last_dec_idx':     last_dec_idx,
+        'last_dec_year':    last_dec_year,
+        'prev_dec_idx':     prev_dec_idx,
+        'prev_dec_year':    prev_dec_year,
+        'year_end_indices': year_end_indices,
+        'all_locations':    all_locations,
+        'region_map':       region_map,
+        'region_order':     region_order_out,
+        'region_colors':    REGION_COLORS,
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+# SHARED PREP HELPERS
+# ══════════════════════════════════════════════════════════════════
+def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=True):
+    """
+    Apply all exclusion rules to normalized car and pto DataFrames.
+    Both dfs must have: loc, init_date, close_date, days2close,
+                        description (for VOID), initials (for JN PTOs)
+    Returns (car_df, pto_df, all_locations, region_map)
+    """
+    # 1. Remove VOID records
+    car_df = car_df[~_is_void(car_df['description'])]
+    pto_df = pto_df[~_is_void(pto_df['description'])]
+
+    # 2. Remove JN PTOs if toggled
+    if exclude_jn:
+        pto_df = pto_df[~_is_jn(pto_df['initials'])]
+
+    # 3. Build region map from List source lookup
+    all_locs_raw = sorted(set(car_df['loc'].unique()) | set(pto_df['loc'].unique()))
+    all_locs_raw = [l for l in all_locs_raw if l not in ('nan', '', 'None')]
+    region_map   = _build_region_map(all_locs_raw, loc_region)
+
+    # 4. Keep only locations that have a valid (non-excluded) region
+    valid_locs = set(l for locs in region_map.values() for l in locs)
+    car_df = car_df[car_df['loc'].isin(valid_locs)]
+    pto_df = pto_df[pto_df['loc'].isin(valid_locs)]
+
+    all_locations = sorted(valid_locs)
+    return car_df, pto_df, all_locations, region_map
 
 
 # ══════════════════════════════════════════════════════════════════
 # MASTER FORMAT PIPELINE
 # ══════════════════════════════════════════════════════════════════
-def _load_master(source):
+def _load_master(source, exclude_jn=True):
     car_raw = _read_source(source, 'Data - CARs')
     pto_raw = _read_source(source, 'Data - PTOs')
 
     def prep(df):
         df = df.copy()
-        df['loc']        = df['location'].astype(str).str.strip()
-        df['init_date']  = pd.to_datetime(df['init_date'], errors='coerce')
-        df['close_date'] = pd.to_datetime(df['close_date'], errors='coerce')
-        df['days2close'] = (df['close_date'] - df['init_date']).dt.days
-        df['is_closed']  = df['close_date'].notna()
-        df = df[df['init_date'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
-        df = df[~df['loc'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
+        df['loc']         = df['location'].astype(str).str.strip()
+        df['init_date']   = pd.to_datetime(df['init_date'],   errors='coerce')
+        df['close_date']  = pd.to_datetime(df['close_date'],  errors='coerce')
+        df['days2close']  = (df['close_date'] - df['init_date']).dt.days
+        df['description'] = df.get('description', pd.Series([''] * len(df))).fillna('')
+        df['initials']    = df.get('initials',    pd.Series([''] * len(df))).fillna('')
+        df = df[df['init_date'].notna() & df['close_date'].notna()]
+        df = df[df['loc'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
         return df
 
     car = prep(car_raw)
     pto = prep(pto_raw)
 
-    car_closed = car[car['is_closed']].copy()
-    car_open   = car[~car['is_closed']].copy()
-    pto_closed = pto[pto['is_closed']].copy()
-    pto_open   = pto[~pto['is_closed']].copy()
+    loc_region   = _read_list_source(source) or LOCATION_REGION
+    car, pto, all_locations, region_map = _apply_exclusions(car, pto, loc_region, exclude_jn)
 
-    car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
-    pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
+    car['close_month'] = car['close_date'].dt.to_period('M')
+    pto['close_month'] = pto['close_date'].dt.to_period('M')
 
-    # Date range: init start → max close or today
-    all_inits  = pd.concat([car['init_date'], pto['init_date']]).dropna()
-    all_closes = pd.concat([car_closed['close_date'], pto_closed['close_date']]).dropna()
+    all_closes = pd.concat([car['close_date'], pto['close_date']]).dropna()
+    all_inits  = pd.concat([
+        pd.to_datetime(car_raw['init_date'], errors='coerce'),
+        pd.to_datetime(pto_raw['init_date'], errors='coerce')
+    ]).dropna()
     data_start = all_inits.min().to_period('M')
     data_end   = max(all_closes.max(), pd.Timestamp.now()).to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
 
-    # Read List source for region assignments if present
-    loc_region_override = _read_list_source(source)
-
-    # Locations + region map
-    all_locs_raw  = sorted(set(car['loc'].unique()) | set(pto['loc'].unique()))
-    all_locations = [l for l in all_locs_raw
-                     if not any(s in l for s in SKIP_LOCS) and l not in ('nan','')]
-    region_map    = _build_region_map(all_locations, loc_region_override)
-
-    # Exclude locations that belong to excluded regions
-    excluded_locs = set(all_locs_raw) - set(l for locs in region_map.values() for l in locs)
-    if excluded_locs:
-        car_closed = car_closed[~car_closed['loc'].isin(excluded_locs)]
-        car_open   = car_open[~car_open['loc'].isin(excluded_locs)]
-        pto_closed = pto_closed[~pto_closed['loc'].isin(excluded_locs)]
-        pto_open   = pto_open[~pto_open['loc'].isin(excluded_locs)]
-    all_locations = [l for l in all_locations if l not in excluded_locs]
-
-    return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
+    return car, pto, months, all_locations, region_map
 
 
 # ══════════════════════════════════════════════════════════════════
-# PIVOT FORMAT PIPELINE  (legacy)
+# PIVOT FORMAT PIPELINE
 # ══════════════════════════════════════════════════════════════════
-def _load_pivot(source):
-    # List source for region map
-    ls = _read_source(source, 'List source', header=0)
-    ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
-    ls['Location'] = ls['Location'].str.strip()
-    ls['Area']     = ls['Area'].str.strip()
-    ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
-    ls = ls[ls['Area'] != 'VOID']
-    ls = ls[~ls['Area'].isin(EXCLUDE_REGIONS)]  # exclude Corporate etc.
-    region_map    = {}
-    for _, row in ls.iterrows():
-        region_map.setdefault(row['Area'], []).append(row['Location'])
-    all_locations = sorted(ls['Location'].unique().tolist())
+def _load_pivot(source, exclude_jn=True):
+    # ── List source ───────────────────────────────────────────────
+    loc_region = _read_list_source(source) or LOCATION_REGION
 
-    # Load List source for region map
-    ls = _read_source(source, 'List source', header=0)
-    ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
-    ls['Location'] = ls['Location'].str.strip()
-    ls['Area'] = ls['Area'].str.strip()
-    ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
-    ls = ls[ls['Area'] != 'VOID']
-    ls = ls[~ls['Area'].isin(EXCLUDE_REGIONS)]  # exclude Corporate etc.
-    region_map = {}
-    for _, row in ls.iterrows():
-        region_map.setdefault(row['Area'], []).append(row['Location'])
-    all_locations = sorted(ls['Location'].unique().tolist())
-
-    # Determine sheet names for CAR and PTO
-    xl_all = pd.read_excel(source, sheet_name=None, header=0)
-    sheets_all = list(xl_all.keys())
-    car_sheet = next((s for s in sheets_all if 'CAR' in s), None)
-    pto_sheet = next((s for s in sheets_all if 'PTO' in s or 'CAF' in s or 'Assessment' in s), None)
-    if not car_sheet or not pto_sheet:
-        raise ValueError("Could not find CAR or PTO sheets in legacy file")
-
-    # CARs
-    car_raw = _read_source(source, car_sheet, header=0)
+    # ── CARs ──────────────────────────────────────────────────────
+    car_raw = _read_source(source, 'Data - CARs', header=0)
     car_raw.columns = car_raw.columns.str.strip()
-    if 'Location' not in car_raw.columns:
-        car_raw = _read_source(source, car_sheet, header=1)
-        car_raw.columns = car_raw.columns.str.strip()
 
-    # PTOs
-    pto_raw = _read_source(source, pto_sheet, header=0)
-    pto_raw.columns = pto_raw.columns.str.strip()
-    if 'Location' not in pto_raw.columns:
-        pto_raw = _read_source(source, pto_sheet, header=1)
-        pto_raw.columns = pto_raw.columns.str.strip()
+    # Flexible column detection
+    def _find_col(columns, *terms, exclude=None):
+        """Find first column whose name contains ALL terms (case-insensitive).
+        exclude: list of terms that must NOT appear in the column name."""
+        for c in columns:
+            cl = str(c).lower()
+            if all(t.lower() in cl for t in terms):
+                if exclude and any(e.lower() in cl for e in exclude):
+                    continue
+                return c
+        return None
 
-    # CAR effectiveness col
-    car_eff_col = next((c for c in car_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
-    if not car_eff_col:
-        raise ValueError(f"Cannot find effectiveness column in CARs. Columns: {car_raw.columns.tolist()}")
+    loc_col      = _find_col(car_raw.columns, 'location', 'drop') \
+                   or _find_col(car_raw.columns, 'location')
+    init_col     = _find_col(car_raw.columns, 'initialized', 'date') \
+                   or _find_col(car_raw.columns, 'car', 'date', exclude=['close','eff','deemed'])
+    close_col    = _find_col(car_raw.columns, 'effectiveness') \
+                   or _find_col(car_raw.columns, 'deemed')
+    desc_col     = _find_col(car_raw.columns, 'description') \
+                   or _find_col(car_raw.columns, 'brief')
+    initials_col = _find_col(car_raw.columns, 'initials', exclude=['date', 'initialized'])
 
-    # PTO effectiveness col
-    pto_eff_col = next((c for c in pto_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
-    if not pto_eff_col:
-        raise ValueError(f"Cannot find effectiveness column in PTOs. Columns: {pto_raw.columns.tolist()}")
+    if not all([loc_col, init_col, close_col]):
+        raise ValueError(f"Cannot find required CAR columns. Found: {car_raw.columns.tolist()}")
 
-    def prep_pivot(raw, loc_col, init_col, eff_col):
+    def prep_car(raw):
         df = raw.copy()
-        df['loc'] = df[loc_col].astype(str).str.strip()
-        df['init_date'] = pd.to_datetime(df[init_col], errors='coerce')
-        df['close_date'] = pd.to_datetime(df[eff_col], errors='coerce')
-        df['days2close'] = (df['close_date'] - df['init_date']).dt.days
-        df['is_closed'] = df['close_date'].notna()
-        df = df[df['init_date'].notna() & (df['loc'] != 'nan')]
+        df['loc']         = df[loc_col].astype(str).str.strip()
+        df['init_date']   = pd.to_datetime(df[init_col],  errors='coerce')
+        df['close_date']  = pd.to_datetime(df[close_col], errors='coerce')
+        df['days2close']  = (df['close_date'] - df['init_date']).dt.days
+        df['description'] = df[desc_col].fillna('') if desc_col else ''
+        df['initials']    = df[initials_col].fillna('') if initials_col else ''
+        df = df[df['init_date'].notna() & df['close_date'].notna()]
+        df = df[df['loc'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
         return df
 
-    car = prep_pivot(car_raw, 'Location', 'CAR initialized date', car_eff_col)
-    pto = prep_pivot(pto_raw, 'Location', 'PTO initialized date', pto_eff_col)
+    # ── PTOs ──────────────────────────────────────────────────────
+    pto_raw = _read_source(source, 'Open data - PTOs', header=0)
+    pto_raw.columns = pto_raw.columns.str.strip()
 
-    car_closed = car[car['is_closed']].copy()
-    car_open = car[~car['is_closed']].copy()
-    pto_closed = pto[pto['is_closed']].copy()
-    pto_open = pto[~pto['is_closed']].copy()
+    pto_loc_col      = _find_col(pto_raw.columns, 'location', 'drop') \
+                       or _find_col(pto_raw.columns, 'location')
+    pto_init_col     = _find_col(pto_raw.columns, 'initialized', 'date') \
+                       or _find_col(pto_raw.columns, 'pto', 'date', exclude=['close','eff','deemed'])
+    pto_close_col    = _find_col(pto_raw.columns, 'effectiveness') \
+                       or _find_col(pto_raw.columns, 'deemed')
+    pto_desc_col     = _find_col(pto_raw.columns, 'description') \
+                       or _find_col(pto_raw.columns, 'brief')
+    pto_initials_col = _find_col(pto_raw.columns, 'initials', exclude=['date', 'initialized'])
 
-    car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
-    pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
+    if not all([pto_loc_col, pto_init_col, pto_close_col]):
+        raise ValueError(f"Cannot find required PTO columns. Found: {pto_raw.columns.tolist()}")
 
-    all_inits = pd.concat([car['init_date'], pto['init_date']]).dropna()
-    all_closes = pd.concat([car_closed['close_date'], pto_closed['close_date']]).dropna()
+    def prep_pto(raw):
+        df = raw.copy()
+        df['loc']         = df[pto_loc_col].astype(str).str.strip()
+        df['init_date']   = pd.to_datetime(df[pto_init_col],   errors='coerce')
+        df['close_date']  = pd.to_datetime(df[pto_close_col],  errors='coerce')
+        df['days2close']  = (df['close_date'] - df['init_date']).dt.days
+        df['description'] = df[pto_desc_col].fillna('')     if pto_desc_col     else ''
+        df['initials']    = df[pto_initials_col].fillna('') if pto_initials_col else ''
+        df = df[df['init_date'].notna() & df['close_date'].notna()]
+        df = df[df['loc'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
+        return df
+
+    car = prep_car(car_raw)
+    pto = prep_pto(pto_raw)
+
+    car, pto, all_locations, region_map = _apply_exclusions(car, pto, loc_region, exclude_jn)
+
+    car['close_month'] = car['close_date'].dt.to_period('M')
+    pto['close_month'] = pto['close_date'].dt.to_period('M')
+
+    all_closes = pd.concat([car['close_date'], pto['close_date']]).dropna()
+    all_inits  = pd.concat([
+        pd.to_datetime(car_raw[init_col],     errors='coerce'),
+        pd.to_datetime(pto_raw[pto_init_col], errors='coerce')
+    ]).dropna()
     data_start = all_inits.min().to_period('M')
-    data_end = all_closes.max().to_period('M')
-    months = pd.period_range(data_start, data_end, freq='M')
+    data_end   = max(all_closes.max(), pd.Timestamp.now()).to_period('M')
+    months     = pd.period_range(data_start, data_end, freq='M')
 
-    # Exclude Corporate and other excluded-region locations from data
-    excluded_locs = set()
-    for region in EXCLUDE_REGIONS:
-        for loc in ls[ls['Area'] == region]['Location'].tolist() if 'Area' in ls.columns else []:
-            excluded_locs.add(loc)
-    if excluded_locs:
-        car_closed = car_closed[~car_closed['loc'].isin(excluded_locs)]
-        car_open = car_open[~car_open['loc'].isin(excluded_locs)]
-        pto_closed = pto_closed[~pto_closed['loc'].isin(excluded_locs)]
-        pto_open = pto_open[~pto_open['loc'].isin(excluded_locs)]
-
-    return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
+    return car, pto, months, all_locations, region_map
 
 
 # ══════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ══════════════════════════════════════════════════════════════════
-def load_and_compute(file_source) -> dict:
+def load_and_compute(file_source, exclude_jn=True) -> dict:
     if isinstance(file_source, (str, Path)):
         source      = str(file_source)
         source_name = Path(file_source).name
     else:
         file_source.seek(0)
         source      = io.BytesIO(file_source.read())
-        source_name = "uploaded file"
+        source_name = 'uploaded file'
 
     fmt = _detect_format(source)
 
     if fmt == 'master':
-        car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map = \
-            _load_master(source)
+        car, pto, months, all_locations, region_map = _load_master(source, exclude_jn)
     else:
-        car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map = \
-            _load_pivot(source)
+        car, pto, months, all_locations, region_map = _load_pivot(source, exclude_jn)
 
-    result = _compute_metrics(car_closed, car_open, pto_closed, pto_open,
-                              months, all_locations, region_map)
-    result['loaded_at']  = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
-    result['file_path']  = source_name
+    result = _compute_metrics(car, pto, months, all_locations, region_map)
+    result['loaded_at']   = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
+    result['file_path']   = source_name
     result['file_format'] = fmt
+    result['exclude_jn']  = exclude_jn
     return result
