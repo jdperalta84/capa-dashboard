@@ -183,8 +183,9 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="sidebar-section">Data Source</div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"],
-                                     label_visibility="collapsed")
+    uploaded_files = st.file_uploader("Upload Excel file", type=["xlsx"],
+                                     label_visibility="collapsed",
+                                     accept_multiple_files=True)
     load_btn = st.button("⟳  Reload Data", use_container_width=True)
 
     st.markdown('<div class="sidebar-section">Region</div>', unsafe_allow_html=True)
@@ -216,17 +217,17 @@ with st.sidebar:
 def get_data(file_bytes):
     return load_and_compute(io.BytesIO(file_bytes))
 
-if uploaded_file is not None:
-    file_bytes = uploaded_file.read()
-    file_hash  = hash(file_bytes)
+if uploaded_files:
+    file_bytes = uploaded_files[0].read()
+    file_hash = hash(file_bytes)
     if ("data" not in st.session_state
             or st.session_state.get("file_hash") != file_hash
             or load_btn):
         try:
             get_data.clear()
-            st.session_state.data      = get_data(file_bytes)
+            st.session_state.data = get_data(file_bytes)
             st.session_state.file_hash = file_hash
-            st.session_state.filename  = uploaded_file.name
+            st.session_state.filename = uploaded_files[0].name
         except Exception as e:
             st.error(f"Error loading file: {e}")
             st.stop()
