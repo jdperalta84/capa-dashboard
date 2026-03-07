@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import io
 
-from data_engine import load_and_compute, REGION_ORDER, REGION_COLORS
+from data_engine import load_and_compute, load_and_compute_multi, REGION_ORDER, REGION_COLORS
 from export_utils import export_regional_summary
 
 st.set_page_config(page_title="CAPA · PTO Dashboard", page_icon="📋",
@@ -216,12 +216,13 @@ with st.sidebar:
 # LOAD DATA
 # ══════════════════════════════════════════════════════════════════
 @st.cache_data(show_spinner="Computing metrics…")
-def get_data(file_bytes, exclude_jn=True):
-    return load_and_compute(io.BytesIO(file_bytes), exclude_jn=exclude_jn)
+def get_data(all_file_bytes, exclude_jn=True):
+    return load_and_compute_multi(
+        [io.BytesIO(b) for b in all_file_bytes], exclude_jn=exclude_jn)
 
 if uploaded_files:
-    file_bytes = uploaded_files[0].read()
-    file_hash  = hash(file_bytes)
+    all_bytes  = tuple(f.read() for f in uploaded_files)
+    file_hash  = hash(all_bytes)
     jn_changed = st.session_state.get("exclude_jn") != exclude_jn
     if ("data" not in st.session_state
             or st.session_state.get("file_hash") != file_hash
@@ -229,7 +230,7 @@ if uploaded_files:
         st.session_state.exclude_jn = exclude_jn
         try:
             get_data.clear()
-            st.session_state.data = get_data(file_bytes, exclude_jn)
+            st.session_state.data = get_data(all_bytes, exclude_jn)
             st.session_state.file_hash = file_hash
             st.session_state.filename = uploaded_files[0].name
         except Exception as e:
