@@ -346,8 +346,26 @@ section[data-testid="stSidebar"] .stToggle span { color: #c8d6e8 !important; }
 }
 
 /* ══════════════════════════════════════════════
-   MISC POLISH
+   EQUAL HEIGHT METRIC CARDS
    ══════════════════════════════════════════════ */
+/* Make scorecard columns stretch to equal height */
+[data-testid="stHorizontalBlock"]:has(.metric-card) {
+    align-items: stretch !important;
+}
+[data-testid="stHorizontalBlock"]:has(.metric-card) > [data-testid="column"] {
+    display: flex !important;
+    flex-direction: column !important;
+}
+[data-testid="stHorizontalBlock"]:has(.metric-card) > [data-testid="column"] > div {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+.metric-card {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
 /* Remove default Streamlit red top bar */
 #MainMenu, footer, header { visibility: hidden; }
 /* Tighten column gaps slightly */
@@ -542,9 +560,9 @@ def ov_color(val, t_hi, t_lo):
     else:            return '#0d7a4e', '#fff'
 
 THEME = {
-    'car':      {'primary': '#1e6fd9', 'bar2': '#e07b39', 'line': '#c0392b', 'wavg': '#9aa3b0'},
-    'pto':      {'primary': '#0d7a4e', 'bar2': '#e07b39', 'line': '#8b1a1a', 'wavg': '#9aa3b0'},
-    'combined': {'primary': '#8C1D18', 'bar2': '#e07b39', 'line': '#5a6577', 'wavg': '#9aa3b0'},
+    'car':      {'primary': '#1e6fd9', 'bar2': '#64748b', 'line': '#c0392b', 'wavg': '#9aa3b0'},
+    'pto':      {'primary': '#0d7a4e', 'bar2': '#64748b', 'line': '#8b1a1a', 'wavg': '#9aa3b0'},
+    'combined': {'primary': '#8C1D18', 'bar2': '#64748b', 'line': '#5a6577', 'wavg': '#9aa3b0'},
 }
 
 def get_full(key):  return D[key].get(data_key, D[key]['ALL'])
@@ -656,10 +674,9 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     with c3:
         st.markdown(f"""
         <div class="metric-card" style="border-color:{trend_color}">
-          <div class="metric-val" style="color:{trend_color};font-size:1.5rem;
-               font-family:'DM Mono',monospace">{trend_display}</div>
+          <div class="metric-val" style="color:{trend_color};font-size:1.8rem">{trend_display}</div>
           <div class="metric-lbl">6-Month Trend (Open ≥90)</div>
-          <div class="metric-sub" style="font-family:'DM Sans',sans-serif">{trend_lbl}</div>
+          <div class="metric-sub">{trend_sub}</div>
           <div class="metric-divider"></div>
           <div class="metric-ye-lbl">{ye_label}</div>
           <div class="metric-ye-val" style="color:{ye_ov_color}">{ye_trend_lbl}</div>
@@ -680,7 +697,6 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
 # ══════════════════════════════════════════════════════════════════
 def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
     closed   = [r['closed']   for r in sliced_metrics]
-    avg_days = [r['avg_days'] for r in sliced_metrics]
     ov90     = [r['ov90']     for r in sliced_metrics]
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -695,13 +711,13 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
     if show_split:
         fig.add_trace(go.Bar(
             x=slice_months, y=[r.get('ov90_car', 0) for r in sliced_metrics],
-            name="CARs Open ≥90", marker_color='#f97316', opacity=0.8,
+            name="CARs Open ≥90", marker_color='#64748b', opacity=0.85,
             marker_line_width=0,
             hovertemplate="<b>%{x}</b><br>CARs ≥90: %{y}<extra></extra>"),
             secondary_y=False)
         fig.add_trace(go.Bar(
             x=slice_months, y=[r.get('ov90_pto', 0) for r in sliced_metrics],
-            name="PTOs Open ≥90", marker_color='#fbbf24', opacity=0.8,
+            name="PTOs Open ≥90", marker_color='#94a3b8', opacity=0.85,
             marker_line_width=0,
             hovertemplate="<b>%{x}</b><br>PTOs ≥90: %{y}<extra></extra>"),
             secondary_y=False)
@@ -712,14 +728,6 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
             marker_line_width=0,
             hovertemplate="<b>%{x}</b><br>Open ≥90: %{y}<extra></extra>"),
             secondary_y=False)
-
-    fig.add_trace(go.Scatter(
-        x=slice_months, y=avg_days, name="Avg Days to Close",
-        mode="lines+markers",
-        line=dict(color=colors['line'], width=2.5),
-        marker=dict(size=5, color=colors['line']),
-        hovertemplate="<b>%{x}</b><br>Avg Days: %{y:.0f}<extra></extra>"),
-        secondary_y=True)
 
     fig.add_trace(go.Scatter(
         x=slice_months, y=sliced_wavg, name="Wtd Avg (YTD)",
@@ -789,24 +797,13 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
 def monthly_table(sliced_metrics, sliced_wavg, extra_cols=None):
     rows = []
     for i, (m, r, w) in enumerate(zip(slice_months, sliced_metrics, sliced_wavg)):
-        prev_ov = sliced_metrics[i - 1]['ov90'] if i > 0 else None
-        ov      = r['ov90']
-        trend   = '—' if prev_ov is None else ('▲' if ov > prev_ov else ('▼' if ov < prev_ov else '→'))
-        row = {'Month': m, 'Closed': r['closed'],
-               'Avg Days': r['avg_days'], 'Open ≥90': ov, 'Wtd Avg': w, 'Trend': trend}
+        row = {'Month': m, 'Closed': r['closed'], 'Open ≥90': r['ov90'], 'Wtd Avg': w}
         if extra_cols:
             row.update(extra_cols[i])
         rows.append(row)
     df = pd.DataFrame(rows)
-
-    def color_trend(v):
-        if v == '▲': return 'color:#ef4444;font-weight:600'
-        if v == '▼': return 'color:#22c55e;font-weight:600'
-        return 'color:#94a3b8'
-
     return (df.style
-              .applymap(color_trend, subset=['Trend'])
-              .format({'Avg Days': '{:.0f}', 'Open ≥90': '{:.0f}', 'Wtd Avg': '{:.0f}'}))
+              .format({'Open ≥90': '{:.0f}', 'Wtd Avg': '{:.0f}'}))
 
 # ══════════════════════════════════════════════════════════════════
 # TOP 20  (uses last month of sliced range)
@@ -949,9 +946,11 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
 
     st.markdown('<div style="margin-top:1rem"></div>', unsafe_allow_html=True)
 
-    # Build Top 20 dynamically from selected region/location
-    stats_key = (metrics_key.replace('_metrics', '_stats'))
+    # Build Top 20 dynamically — uses sliced range so it responds to sidebar filters
+    stats_key = metrics_key.replace('_metrics', '_stats')
     stats     = D[stats_key]
+    per_loc_metrics_key = metrics_key  # e.g. 'car_metrics'
+
     # Get locations in scope for current filter
     if data_key == 'ALL':
         scope_locs = D['all_locations']
@@ -961,10 +960,38 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
                       if l in D['region_map'].get(region, [])]
     else:
         scope_locs = [data_key] if data_key in stats else []
-    ranked = sorted(scope_locs, key=lambda l: stats[l]['last_ov'], reverse=True)[:20]
-    dynamic_top20 = [{'loc': l, 'last_ov': stats[l]['last_ov'],
-                      'avg_ov': stats[l]['avg_ov'],
-                      'total_closed': stats[l]['total_closed']} for l in ranked]
+
+    # Compute last_ov from the end of the SLICED range for each location
+    all_loc_metrics = D[per_loc_metrics_key]  # dict keyed by location name
+    def loc_last_ov(loc):
+        lm = all_loc_metrics.get(loc)
+        if lm is None:
+            return stats[loc]['last_ov']  # fallback
+        # end_idx is the global slice end; clamp to available data for this loc
+        idx = min(end_idx, len(lm) - 1)
+        return lm[idx]['ov90']
+
+    def loc_avg_ov(loc):
+        lm = all_loc_metrics.get(loc)
+        if lm is None:
+            return stats[loc]['avg_ov']
+        sliced = lm[start_idx:end_idx + 1]
+        if not sliced:
+            return 0
+        return int(round(sum(r['ov90'] for r in sliced) / len(sliced)))
+
+    def loc_total_closed(loc):
+        lm = all_loc_metrics.get(loc)
+        if lm is None:
+            return stats[loc]['total_closed']
+        sliced = lm[start_idx:end_idx + 1]
+        return sum(r['closed'] for r in sliced)
+
+    ranked = sorted(scope_locs, key=loc_last_ov, reverse=True)[:20]
+    dynamic_top20 = [{'loc': l,
+                      'last_ov':      loc_last_ov(l),
+                      'avg_ov':       loc_avg_ov(l),
+                      'total_closed': loc_total_closed(l)} for l in ranked]
 
     sec = secondary_cols_fn(dynamic_top20) if secondary_cols_fn else None
     top20_table(dynamic_top20, t_hi, t_lo, val_label, secondary_cols=sec)
@@ -979,9 +1006,16 @@ with tab_pto:
 
 with tab_combined:
     def cmb_sec(top20):
-        cs = D['car_stats']; ps = D['pto_stats']
-        return [{'CAR ≥90': cs[i['loc']]['last_ov'],
-                 'PTO ≥90': ps[i['loc']]['last_ov']} for i in top20]
+        car_lm = D['car_metrics']
+        pto_lm = D['pto_metrics']
+        def get_ov(loc_metrics, loc):
+            lm = loc_metrics.get(loc)
+            if lm is None:
+                return 0
+            idx = min(end_idx, len(lm) - 1)
+            return lm[idx]['ov90']
+        return [{'CAR ≥90': get_ov(car_lm, i['loc']),
+                 'PTO ≥90': get_ov(pto_lm, i['loc'])} for i in top20]
     render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
                D['cmb_t_hi'], D['cmb_t_lo'], D['cmb_top20'], 'Total Ov90',
                show_split=True, secondary_cols_fn=cmb_sec)
