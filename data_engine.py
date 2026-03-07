@@ -223,16 +223,39 @@ def _is_jn(series):
 # ══════════════════════════════════════════════════════════════════
 # SHARED METRIC ENGINE
 # ══════════════════════════════════════════════════════════════════
-def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
+def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
+                     car_open=None, pto_open=None):
     """
-    All metrics derived from CLOSED records only.
-      - avg_days / total_closed: records whose close_date falls in that month
-      - ov90: records closed in that month whose days2close >= 90
-              (i.e. took 90+ days from init to close)
+    closed / avg_days / wavg : records whose close_date falls in that month.
+    ov90 : point-in-time snapshot per month-end —
+           record counted if: init_date <= (month_end - 90 days)
+                          AND (close_date is NaT  OR  close_date > month_end)
+           Uses ALL records (closed + open) so historical snapshots are correct.
+           car_open / pto_open are currently-open records (no close_date).
+           car_closed / pto_closed are closed records (have close_date).
+           Combined into car_all / pto_all for ov90 evaluation.
     Running weighted avg resets each January.
     """
+    from calendar import monthrange as _mr
+
     NM           = len(months)
     month_labels = [m.strftime('%b %Y') for m in months]
+
+    _empty_df = pd.DataFrame(columns=['loc', 'init_date', 'close_date'])
+
+    # Build "all records" DataFrames (closed + open) for ov90 snapshot
+    def _build_all(closed_df, open_df):
+        parts = []
+        if closed_df is not None and len(closed_df) > 0:
+            parts.append(closed_df[['loc', 'init_date', 'close_date']])
+        if open_df is not None and len(open_df) > 0:
+            o = open_df[['loc', 'init_date']].copy()
+            o['close_date'] = pd.NaT
+            parts.append(o)
+        return pd.concat(parts, ignore_index=True) if parts else _empty_df
+
+    car_all = _build_all(car_closed, car_open)
+    pto_all = _build_all(pto_closed, pto_open)
 
     year_end_indices = {m.year: i for i, m in enumerate(months) if m.month == 12}
     last_dec_year    = max(year_end_indices.keys()) if year_end_indices else None
@@ -241,53 +264,60 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
     prev_dec_idx     = year_end_indices.get(prev_dec_year, None)
 
     def filter_df(df, loc_key):
+        if df is None or len(df) == 0:
+            return df
         if loc_key == 'ALL':
             return df
         if loc_key.startswith('REGION:'):
             return df[df['loc'].isin(region_map.get(loc_key[7:], []))]
         return df[df['loc'] == loc_key]
 
-    def calc(closed_df, loc_key):
+    def month_last_ts(m):
+        last = _mr(m.year, m.month)[1]
+        return pd.Timestamp(m.year, m.month, last, 23, 59, 59)
+
+    def ov90_snapshot(all_df, loc_key, m):
+        """
+        Count records open as of month-end m that had been open >= 90 days.
+        A record was open at month-end if:
+          - init_date <= (month_end - 90 days)
+          - close_date is NaT  OR  close_date > month_end
+        """
+        df = filter_df(all_df, loc_key)
+        if df is None or len(df) == 0:
+            return 0
+        me     = month_last_ts(m)
+        cutoff = me - pd.Timedelta(days=90)
+        mask_init  = df['init_date'] <= cutoff
+        mask_open  = df['close_date'].isna() | (df['close_date'] > me)
+        return int((mask_init & mask_open).sum())
+
+    def calc(closed_df, all_df, loc_key):
         c    = filter_df(closed_df, loc_key)
         rows = []
-        ytd_ov90 = 0
-        cur_year = months[0].year if len(months) > 0 else None
         for m in months:
-            if m.year != cur_year:       # January reset
-                ytd_ov90 = 0
-                cur_year = m.year
             mc   = c[c['close_month'] == m]
             cnt  = len(mc)
             avg  = int(round(mc['days2close'].mean())) if cnt > 0 else 0
-            ov90_mo  = int((mc['days2close'] >= 90).sum()) if cnt > 0 else 0
-            ytd_ov90 += ov90_mo
+            ov90 = ov90_snapshot(all_df, loc_key, m)
             rows.append({'closed': cnt, 'avg_days': avg,
-                         'ov90':     ov90_mo,    # monthly figure (used in table & chart)
-                         'ov90_ytd': ytd_ov90,   # YTD cumulative Jan 1 → this month
-                         'ov90_mo':  ov90_mo,    # alias kept for compatibility
-                         'total_days': cnt * avg})
+                         'ov90': ov90, 'total_days': cnt * avg})
         return rows
 
     def calc_combined(loc_key):
         cd, pd_ = car_metrics[loc_key], pto_metrics[loc_key]
         rows = []
-        ytd_ov90 = 0
-        cur_year = months[0].year if len(months) > 0 else None
         for i, m in enumerate(months):
-            if m.year != cur_year:
-                ytd_ov90 = 0
-                cur_year = m.year
             c, p  = cd[i], pd_[i]
             total = c['closed'] + p['closed']
             avg   = int(round((c['total_days'] + p['total_days']) / total)) if total > 0 else 0
-            mo_ov90    = c['ov90_mo'] + p['ov90_mo']
-            ytd_ov90  += mo_ov90
-            rows.append({'closed': total, 'avg_days': avg,
-                         'ov90':     mo_ov90,    # monthly figure
-                         'ov90_ytd': ytd_ov90,  # YTD cumulative
-                         'ov90_mo':  mo_ov90,
-                         'ov90_car': c['ov90_mo'],
-                         'ov90_pto': p['ov90_mo'],
+            car_ov = ov90_snapshot(car_all, loc_key, m)
+            pto_ov = ov90_snapshot(pto_all, loc_key, m)
+            rows.append({'closed':     total,
+                         'avg_days':   avg,
+                         'ov90':       car_ov + pto_ov,
+                         'ov90_car':   car_ov,
+                         'ov90_pto':   pto_ov,
                          'total_days': c['total_days'] + p['total_days']})
         return rows
 
@@ -301,13 +331,12 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
             result.append(int(round(cum_days / cum_cls)) if cum_cls > 0 else 0)
         return result
 
-    # Build region keys from actual region_map (not hardcoded REGION_ORDER)
     region_keys = [f'REGION:{r}' for r in region_map.keys()]
     all_keys    = ['ALL'] + region_keys + all_locations
 
-    car_metrics = {k: calc(car_closed, k) for k in all_keys}
-    pto_metrics = {k: calc(pto_closed, k) for k in all_keys}
-    cmb_metrics = {k: calc_combined(k)    for k in all_keys}
+    car_metrics = {k: calc(car_closed, car_all, k) for k in all_keys}
+    pto_metrics = {k: calc(pto_closed, pto_all, k) for k in all_keys}
+    cmb_metrics = {k: calc_combined(k)                 for k in all_keys}
 
     car_wavg = {k: running_wavg(car_metrics[k]) for k in all_keys}
     pto_wavg = {k: running_wavg(pto_metrics[k]) for k in all_keys}
@@ -348,11 +377,10 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
                  'avg_ov': stats[l]['avg_ov'],
                  'total_closed': stats[l]['total_closed']} for l in ranked]
 
-    # Dynamic region_order: only regions present in data, in preferred order
     preferred = ['USWC', 'USGC', 'USNE', 'USMW & River', 'USMA & Carib',
                  'Canada', 'NAM/Chem', 'NAM/LPG', 'ADD/Calib',
                  'USNE, USMW & Canada', 'SE & Caribbean', 'Calibration']
-    active_regions  = list(region_map.keys())
+    active_regions   = list(region_map.keys())
     region_order_out = [r for r in preferred if r in active_regions] + \
                        [r for r in active_regions if r not in preferred]
 
@@ -379,38 +407,45 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
     }
 
 
+
+
 # ══════════════════════════════════════════════════════════════════
 # SHARED PREP HELPERS
 # ══════════════════════════════════════════════════════════════════
-def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=False):
+def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=False,
+                      car_open_df=None, pto_open_df=None):
     """
     Apply all exclusion rules to normalized car and pto DataFrames.
     Both dfs must have: loc, init_date, close_date, days2close,
                         description (for VOID), initials (for JN PTOs)
-    Returns (car_df, pto_df, all_locations, region_map)
-    all_locations includes EVERY valid location from List source (even zero-activity).
+    Returns (car_df, pto_df, car_open_df, pto_open_df, all_locations, region_map)
     """
-    # 1. Remove VOID records
+    # 1. VOID already removed in prep_car/prep_pto — kept here as safety net
     car_df = car_df[~_is_void(car_df['description'])]
     pto_df = pto_df[~_is_void(pto_df['description'])]
 
     # 2. Remove JN PTOs if toggled
     if exclude_jn:
         pto_df = pto_df[~_is_jn(pto_df['initials'])]
+        if pto_open_df is not None and len(pto_open_df):
+            pto_open_df = pto_open_df[~_is_jn(pto_open_df['initials'])]
 
-    # 3. Build region map from ALL locations in List source (not just data)
-    #    This ensures zero-activity labs still appear in dropdowns and exports
+    # 3. Build region map
     all_locs_in_source = sorted(loc_region.keys())
     all_locs_in_source = [l for l in all_locs_in_source if l not in ('nan', '', 'None')]
     region_map = _build_region_map(all_locs_in_source, loc_region)
 
-    # 4. Keep only locations that have a valid (non-excluded) region in the region_map
+    # 4. Keep only valid locations
     valid_locs = set(l for locs in region_map.values() for l in locs)
     car_df = car_df[car_df['loc'].isin(valid_locs)]
     pto_df = pto_df[pto_df['loc'].isin(valid_locs)]
+    if car_open_df is not None:
+        car_open_df = car_open_df[car_open_df['loc'].isin(valid_locs)]
+    if pto_open_df is not None:
+        pto_open_df = pto_open_df[pto_open_df['loc'].isin(valid_locs)]
 
     all_locations = sorted(valid_locs)
-    return car_df, pto_df, all_locations, region_map
+    return car_df, pto_df, car_open_df, pto_open_df, all_locations, region_map
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -511,10 +546,8 @@ def _load_pivot(source, exclude_jn=False):
                    or _find_col(car_raw.columns, 'car #')
     loc_col      = _find_col(car_raw.columns, 'location', 'drop') \
                    or _find_col(car_raw.columns, 'location')
-    init_col     = _find_col(car_raw.columns, 'initialized', 'date') \
-                   or _find_col(car_raw.columns, 'car', 'date', exclude=['close','eff','deemed'])
-    # Close date priority: Effectiveness Review (closed date) > Corrective Action Approved Date
-    close_col    = _find_col(car_raw.columns, 'effectiveness')                    or _find_col(car_raw.columns, 'deemed')                    or _find_col(car_raw.columns, 'approved', 'date')
+    init_col     = car_raw.columns[9]   # col J (index 9) — per column mapping
+    close_col    = car_raw.columns[12]  # col M (index 12) — per column mapping
     desc_col     = _find_col(car_raw.columns, 'description') \
                    or _find_col(car_raw.columns, 'brief')
     initials_col = _find_col(car_raw.columns, 'initials', exclude=['date', 'initialized'])
@@ -522,43 +555,22 @@ def _load_pivot(source, exclude_jn=False):
     if not all([loc_col, init_col, close_col]):
         raise ValueError(f"Cannot find required CAR columns. Found: {car_raw.columns.tolist()}")
 
-    # For CARs: close date column priority order (per-row waterfall)
-    # 1. 'Effectiveness Review (Closed Date)' — present in both years; populated in ~32/423 2025 rows
-    # 2. 'Corrective Action Approved Date' — 2026 column name
-    # 3. 'Complete corrective actions (Approved Date)' — 2025 column name (382/423 2025 rows use this)
-    # The waterfall in prep_car takes the first non-null value per row, so order matters.
-    _eff_col      = _find_col(car_raw.columns, 'effectiveness')
-    _appr_2026    = _find_col(car_raw.columns, 'corrective action approved') \
-                    or _find_col(car_raw.columns, 'corrective', 'approved', 'date',
-                                 exclude=['complete corrective', 'action plan'])
-    _appr_2025    = _find_col(car_raw.columns, 'complete corrective', 'approved') \
-                    or _find_col(car_raw.columns, 'complete', 'approved', 'date',
-                                 exclude=['action plan', 'effectiveness'])
-    car_close_candidates = [c for c in [_eff_col, _appr_2026, _appr_2025] if c is not None]
-    # Deduplicate preserving order
-    seen = set()
-    car_close_candidates = [c for c in car_close_candidates
-                             if not (c in seen or seen.add(c))]
-
     def prep_car(raw):
         df = raw.copy()
         df['loc']        = df[loc_col].astype(str).str.strip()
-        df['init_date']  = pd.to_datetime(df[init_col], errors='coerce')
+        df['init_date']  = pd.to_datetime(df[init_col],  errors='coerce')
+        df['close_date'] = pd.to_datetime(df[close_col], errors='coerce')
         df['record_num'] = df[car_num_col].astype(str).str.strip() if car_num_col else ''
-        # Use first close date column that has a value for each row
-        close_series = pd.Series(pd.NaT, index=df.index)
-        for col in car_close_candidates:
-            parsed = pd.to_datetime(df[col], errors='coerce')
-            close_series = close_series.where(close_series.notna(), parsed)
-        df['close_date']  = close_series
         df['days2close']  = (df['close_date'] - df['init_date']).dt.days
         df['description'] = df[desc_col].fillna('') if desc_col else ''
         df['initials']    = df[initials_col].fillna('') if initials_col else ''
-        df = df[df['init_date'].notna() & df['close_date'].notna()]
-        # Exclude obviously wrong days2close (formula errors: e.g. TODAY()-init for open records)
-        df = df[(df['days2close'] >= 0) & (df['days2close'] < 3650)]
+        df = df[df['init_date'].notna()]
         df = df[df['loc'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
-        return df
+        df = df[~_is_void(df['description'])]
+        closed = df[df['close_date'].notna()].copy()
+        closed = closed[(closed['days2close'] >= 0) & (closed['days2close'] < 3650)]
+        open_  = df[df['close_date'].isna()].copy()
+        return closed, open_
 
     # ── PTOs ──────────────────────────────────────────────────────
     pto_raw = _read_source(source, pto_sheet, header=0)
@@ -568,10 +580,8 @@ def _load_pivot(source, exclude_jn=False):
                        or _find_col(pto_raw.columns, 'location')
     pto_num_col      = _find_col(pto_raw.columns, 'pto', '#') \
                        or _find_col(pto_raw.columns, 'pto #')
-    pto_init_col     = _find_col(pto_raw.columns, 'initialized', 'date') \
-                       or _find_col(pto_raw.columns, 'pto', 'date', exclude=['close','eff','deemed'])
-    pto_close_col    = _find_col(pto_raw.columns, 'effectiveness') \
-                       or _find_col(pto_raw.columns, 'deemed')
+    pto_init_col     = pto_raw.columns[8]   # col I (index 8) — per column mapping
+    pto_close_col    = pto_raw.columns[10]  # col K (index 10) — per column mapping
     pto_desc_col     = _find_col(pto_raw.columns, 'description') \
                        or _find_col(pto_raw.columns, 'brief')
     pto_initials_col = _find_col(pto_raw.columns, 'initials', exclude=['date', 'initialized'])
@@ -588,20 +598,25 @@ def _load_pivot(source, exclude_jn=False):
         df['days2close']  = (df['close_date'] - df['init_date']).dt.days
         df['description'] = df[pto_desc_col].fillna('')     if pto_desc_col     else ''
         df['initials']    = df[pto_initials_col].fillna('') if pto_initials_col else ''
-        df = df[df['init_date'].notna() & df['close_date'].notna()]
-        df = df[(df['days2close'] >= 0) & (df['days2close'] < 3650)]
+        df = df[df['init_date'].notna()]
         df = df[df['loc'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
-        return df
+        df = df[~_is_void(df['description'])]
+        closed = df[df['close_date'].notna()].copy()
+        closed = closed[(closed['days2close'] >= 0) & (closed['days2close'] < 3650)]
+        open_  = df[df['close_date'].isna()].copy()
+        return closed, open_
 
-    car = prep_car(car_raw)
-    pto = prep_pto(pto_raw)
+    car_closed, car_open = prep_car(car_raw)
+    pto_closed, pto_open = prep_pto(pto_raw)
 
-    car, pto, all_locations, region_map = _apply_exclusions(car, pto, loc_region, exclude_jn)
+    car_closed, pto_closed, car_open, pto_open, all_locations, region_map = \
+        _apply_exclusions(car_closed, pto_closed, loc_region, exclude_jn,
+                          car_open_df=car_open, pto_open_df=pto_open)
 
-    car['close_month'] = car['close_date'].dt.to_period('M')
-    pto['close_month'] = pto['close_date'].dt.to_period('M')
+    car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
+    pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
 
-    all_closes = pd.concat([car['close_date'], pto['close_date']]).dropna()
+    all_closes = pd.concat([car_closed['close_date'], pto_closed['close_date']]).dropna()
     all_inits  = pd.concat([
         pd.to_datetime(car_raw[init_col],     errors='coerce'),
         pd.to_datetime(pto_raw[pto_init_col], errors='coerce')
@@ -611,7 +626,7 @@ def _load_pivot(source, exclude_jn=False):
     data_end   = (pd.Timestamp.now() if pd.isna(_max_close) else max(_max_close, pd.Timestamp.now())).to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
 
-    return car, pto, months, all_locations, region_map, loc_id_map
+    return car_closed, pto_closed, car_open, pto_open, months, all_locations, region_map, loc_id_map
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -630,10 +645,12 @@ def load_and_compute(file_source, exclude_jn=False) -> dict:
 
     if fmt == 'master':
         car, pto, months, all_locations, region_map, loc_id_map = _load_master(source, exclude_jn)
+        car_open, pto_open = None, None
     else:
-        car, pto, months, all_locations, region_map, loc_id_map = _load_pivot(source, exclude_jn)
+        car, pto, car_open, pto_open, months, all_locations, region_map, loc_id_map = _load_pivot(source, exclude_jn)
 
-    result = _compute_metrics(car, pto, months, all_locations, region_map)
+    result = _compute_metrics(car, pto, months, all_locations, region_map,
+                              car_open=car_open, pto_open=pto_open)
     result['loc_id_map'] = loc_id_map
     result['loaded_at']   = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
     result['file_path']   = source_name
@@ -656,6 +673,7 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
         return load_and_compute(file_sources[0], exclude_jn=exclude_jn)
 
     all_car, all_pto = [], []
+    all_car_open, all_pto_open = [], []
     combined_loc_region = {}
     combined_loc_id = {}
     source_names = []
@@ -673,11 +691,14 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
         fmt = _detect_format(source)
         if fmt == 'master':
             car, pto, _, _, _, _lid = _load_master(source, exclude_jn)
+            car_open, pto_open = pd.DataFrame(columns=['loc','init_date']), pd.DataFrame(columns=['loc','init_date'])
         else:
-            car, pto, _, _, _, _lid = _load_pivot(source, exclude_jn)
+            car, pto, car_open, pto_open, _, _, _, _lid = _load_pivot(source, exclude_jn)
 
         all_car.append(car)
         all_pto.append(pto)
+        all_car_open.append(car_open)
+        all_pto_open.append(pto_open)
 
         # Merge loc→region and loc→id from each file's List source
         _lr, _lid = _read_list_source(source)
@@ -688,9 +709,10 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
 
     car_combined = pd.concat(all_car, ignore_index=True)
     pto_combined = pd.concat(all_pto, ignore_index=True)
+    car_open_combined = pd.concat(all_car_open, ignore_index=True)
+    pto_open_combined = pd.concat(all_pto_open, ignore_index=True)
 
-    # Deduplicate on record number (CAR # / PTO #) — globally unique across years
-    # Fall back to loc+init+close only if record_num column is missing/empty
+    # Deduplicate closed records on record number
     if 'record_num' in car_combined.columns and car_combined['record_num'].ne('').any():
         car_combined = car_combined.drop_duplicates(subset=['record_num'])
     else:
@@ -699,6 +721,22 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
         pto_combined = pto_combined.drop_duplicates(subset=['record_num'])
     else:
         pto_combined = pto_combined.drop_duplicates(subset=['loc', 'init_date', 'close_date'])
+
+    # Deduplicate open records by record_num — same record in 2025 and 2026 file while still open
+    car_open_combined = car_open_combined.drop_duplicates(subset=['record_num'], keep='last') \
+        if 'record_num' in car_open_combined.columns and car_open_combined['record_num'].ne('').any() \
+        else car_open_combined
+    pto_open_combined = pto_open_combined.drop_duplicates(subset=['record_num'], keep='last') \
+        if 'record_num' in pto_open_combined.columns and pto_open_combined['record_num'].ne('').any() \
+        else pto_open_combined
+
+    # Remove open records that were closed in another file (by record_num)
+    if 'record_num' in car_combined.columns and 'record_num' in car_open_combined.columns:
+        closed_car_nums = set(car_combined['record_num'])
+        car_open_combined = car_open_combined[~car_open_combined['record_num'].isin(closed_car_nums)]
+    if 'record_num' in pto_combined.columns and 'record_num' in pto_open_combined.columns:
+        closed_pto_nums = set(pto_combined['record_num'])
+        pto_open_combined = pto_open_combined[~pto_open_combined['record_num'].isin(closed_pto_nums)]
 
     # Rebuild region map from combined loc_region (all List source locs, not just data)
     if not combined_loc_region:
@@ -714,6 +752,8 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     valid_locs   = set(l for locs in region_map.values() for l in locs)
     car_combined = car_combined[car_combined['loc'].isin(valid_locs)]
     pto_combined = pto_combined[pto_combined['loc'].isin(valid_locs)]
+    car_open_combined = car_open_combined[car_open_combined['loc'].isin(valid_locs)]
+    pto_open_combined = pto_open_combined[pto_open_combined['loc'].isin(valid_locs)]
     all_locations = sorted(valid_locs)
 
     # Date range spanning all files
@@ -727,7 +767,8 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     car_combined['close_month'] = car_combined['close_date'].dt.to_period('M')
     pto_combined['close_month'] = pto_combined['close_date'].dt.to_period('M')
 
-    result = _compute_metrics(car_combined, pto_combined, months, all_locations, region_map)
+    result = _compute_metrics(car_combined, pto_combined, months, all_locations, region_map,
+                              car_open=car_open_combined, pto_open=pto_open_combined)
     result['loaded_at']   = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
     result['file_path']   = ', '.join(source_names)
     result['file_format'] = 'multi'
