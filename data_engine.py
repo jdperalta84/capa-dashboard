@@ -128,20 +128,28 @@ def _read_source(source, sheet_name, header=0):
 
 
 def _detect_format(source):
-    """Return 'master' or 'pivot' based on sheet names and column structure."""
     if isinstance(source, io.BytesIO):
         source.seek(0)
     xl = pd.read_excel(source, sheet_name=None, nrows=2)
     sheets = list(xl.keys())
-    # Master format has 'Data - CARs' with normalized col 'car_number'
+    # Legacy pivot format: sheets contain both CAR and PTO (but not Data - CARs)
+    if any('CAR' in name for name in sheets) and any('PTO' in name for name in sheets) and not any('Data - CARs' in name for name in sheets):
+        return 'pivot'
+    # Master format: Data - CARs with columns
     if 'Data - CARs' in sheets:
         cols = [str(c).strip() for c in xl['Data - CARs'].columns]
         if 'car_number' in cols or 'location' in cols:
             return 'master'
-    # Pivot format has 'Open data - PTOs'
+    # Master old style: sheets starting with CAR and PTO
+    if any(name.startswith('CAR') for name in sheets) and any(name.startswith('PTO') for name in sheets):
+        return 'master'
+    # Pivot old style
+    if any(name.startswith('CAF') for name in sheets) or any(name.startswith('Assessment') for name in sheets):
+        return 'pivot'
+    # Pivot new style
     if 'Open data - PTOs' in sheets:
         return 'pivot'
-    # Fallback: if Data - CARs has pivot-style columns
+    # Fallback
     if 'Data - CARs' in sheets:
         cols = [str(c).strip() for c in xl['Data - CARs'].columns]
         if any('Location' in c for c in cols):
@@ -398,57 +406,77 @@ def _load_pivot(source):
         region_map.setdefault(row['Area'], []).append(row['Location'])
     all_locations = sorted(ls['Location'].unique().tolist())
 
+    # Load List source for region map
+    ls = _read_source(source, 'List source', header=0)
+    ls = ls[ls['Location'].notna() & ls['Area'].notna()].copy()
+    ls['Location'] = ls['Location'].str.strip()
+    ls['Area'] = ls['Area'].str.strip()
+    ls = ls[~ls['Location'].apply(lambda x: any(s in str(x) for s in SKIP_LOCS))]
+    ls = ls[ls['Area'] != 'VOID']
+    ls = ls[~ls['Area'].isin(EXCLUDE_REGIONS)]  # exclude Corporate etc.
+    region_map = {}
+    for _, row in ls.iterrows():
+        region_map.setdefault(row['Area'], []).append(row['Location'])
+    all_locations = sorted(ls['Location'].unique().tolist())
+
+    # Determine sheet names for CAR and PTO
+    xl_all = pd.read_excel(source, sheet_name=None, header=0)
+    sheets_all = list(xl_all.keys())
+    car_sheet = next((s for s in sheets_all if 'CAR' in s), None)
+    pto_sheet = next((s for s in sheets_all if 'PTO' in s or 'CAF' in s or 'Assessment' in s), None)
+    if not car_sheet or not pto_sheet:
+        raise ValueError("Could not find CAR or PTO sheets in legacy file")
+
     # CARs
-    car_raw = _read_source(source, 'Data - CARs', header=0)
+    car_raw = _read_source(source, car_sheet, header=0)
     car_raw.columns = car_raw.columns.str.strip()
-    if 'Location \n(drop-down)' not in car_raw.columns:
-        car_raw = _read_source(source, 'Data - CARs', header=1)
+    if 'Location' not in car_raw.columns:
+        car_raw = _read_source(source, car_sheet, header=1)
         car_raw.columns = car_raw.columns.str.strip()
 
     # PTOs
-    pto_raw = _read_source(source, 'Open data - PTOs', header=0)
+    pto_raw = _read_source(source, pto_sheet, header=0)
     pto_raw.columns = pto_raw.columns.str.strip()
-    if 'Location \n(drop-down)' not in pto_raw.columns:
-        pto_raw = _read_source(source, 'Open data - PTOs', header=1)
+    if 'Location' not in pto_raw.columns:
+        pto_raw = _read_source(source, pto_sheet, header=1)
         pto_raw.columns = pto_raw.columns.str.strip()
 
     # CAR effectiveness col
-    car_eff_col = next((c for c in car_raw.columns
-                        if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
+    car_eff_col = next((c for c in car_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
     if not car_eff_col:
         raise ValueError(f"Cannot find effectiveness column in CARs. Columns: {car_raw.columns.tolist()}")
 
-    pto_eff_col = next((c for c in pto_raw.columns
-                        if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
+    # PTO effectiveness col
+    pto_eff_col = next((c for c in pto_raw.columns if 'Effectiveness' in str(c) or 'deemed' in str(c).lower()), None)
     if not pto_eff_col:
         raise ValueError(f"Cannot find effectiveness column in PTOs. Columns: {pto_raw.columns.tolist()}")
 
     def prep_pivot(raw, loc_col, init_col, eff_col):
         df = raw.copy()
-        df['loc']        = df[loc_col].astype(str).str.strip()
-        df['init_date']  = pd.to_datetime(df[init_col], errors='coerce')
-        df['close_date'] = pd.to_datetime(df[eff_col],  errors='coerce')
+        df['loc'] = df[loc_col].astype(str).str.strip()
+        df['init_date'] = pd.to_datetime(df[init_col], errors='coerce')
+        df['close_date'] = pd.to_datetime(df[eff_col], errors='coerce')
         df['days2close'] = (df['close_date'] - df['init_date']).dt.days
-        df['is_closed']  = df['close_date'].notna()
+        df['is_closed'] = df['close_date'].notna()
         df = df[df['init_date'].notna() & (df['loc'] != 'nan')]
         return df
 
-    car = prep_pivot(car_raw, 'Location \n(drop-down)', 'CAR initialized date', car_eff_col)
-    pto = prep_pivot(pto_raw, 'Location \n(drop-down)', 'PTO initialized date', pto_eff_col)
+    car = prep_pivot(car_raw, 'Location', 'CAR initialized date', car_eff_col)
+    pto = prep_pivot(pto_raw, 'Location', 'PTO initialized date', pto_eff_col)
 
     car_closed = car[car['is_closed']].copy()
-    car_open   = car[~car['is_closed']].copy()
+    car_open = car[~car['is_closed']].copy()
     pto_closed = pto[pto['is_closed']].copy()
-    pto_open   = pto[~pto['is_closed']].copy()
+    pto_open = pto[~pto['is_closed']].copy()
 
     car_closed['close_month'] = car_closed['close_date'].dt.to_period('M')
     pto_closed['close_month'] = pto_closed['close_date'].dt.to_period('M')
 
-    all_inits  = pd.concat([car['init_date'], pto['init_date']]).dropna()
+    all_inits = pd.concat([car['init_date'], pto['init_date']]).dropna()
     all_closes = pd.concat([car_closed['close_date'], pto_closed['close_date']]).dropna()
     data_start = all_inits.min().to_period('M')
-    data_end   = all_closes.max().to_period('M')
-    months     = pd.period_range(data_start, data_end, freq='M')
+    data_end = all_closes.max().to_period('M')
+    months = pd.period_range(data_start, data_end, freq='M')
 
     # Exclude Corporate and other excluded-region locations from data
     excluded_locs = set()
@@ -457,9 +485,9 @@ def _load_pivot(source):
             excluded_locs.add(loc)
     if excluded_locs:
         car_closed = car_closed[~car_closed['loc'].isin(excluded_locs)]
-        car_open   = car_open[~car_open['loc'].isin(excluded_locs)]
+        car_open = car_open[~car_open['loc'].isin(excluded_locs)]
         pto_closed = pto_closed[~pto_closed['loc'].isin(excluded_locs)]
-        pto_open   = pto_open[~pto_open['loc'].isin(excluded_locs)]
+        pto_open = pto_open[~pto_open['loc'].isin(excluded_locs)]
 
     return car_closed, car_open, pto_closed, pto_open, months, all_locations, region_map
 
