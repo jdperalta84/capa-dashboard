@@ -809,13 +809,15 @@ def monthly_table(sliced_metrics, sliced_wavg, extra_cols=None):
 # TOP 20  (uses last month of sliced range)
 # ══════════════════════════════════════════════════════════════════
 def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
-    end_label = slice_months[-1] if slice_months else all_months[-1]
+    range_label = f"{start_month} – {slice_months[-1]}" if slice_months else all_months[-1]
     st.markdown(
         f'<div class="section-hdr">⚠ &nbsp;Top 20 Locations — Open ≥90 Days &nbsp;'
-        f'<span style="color:#1e6fd9;font-weight:700">({end_label})</span></div>',
+        f'<span style="color:#8C1D18;font-weight:700">({range_label})</span></div>',
         unsafe_allow_html=True)
 
-    headers = ['#', 'Location', val_label, 'Avg Ov90', 'Total Closed']
+    # Column label: total across range
+    ov_col_lbl = f'{val_label} Total'
+    headers = ['#', 'Location', ov_col_lbl, 'Monthly Avg', 'Total Closed']
     if secondary_cols:
         headers += list(secondary_cols[0].keys())
     widths = [0.3, 2.8, 1.1, 1, 1] + ([1] * len(secondary_cols[0]) if secondary_cols else [])
@@ -961,35 +963,29 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
     else:
         scope_locs = [data_key] if data_key in stats else []
 
-    # Compute last_ov from the end of the SLICED range for each location
-    all_loc_metrics = D[per_loc_metrics_key]  # dict keyed by location name
-    def loc_last_ov(loc):
-        lm = all_loc_metrics.get(loc)
-        if lm is None:
-            return stats[loc]['last_ov']  # fallback
-        # end_idx is the global slice end; clamp to available data for this loc
-        idx = min(end_idx, len(lm) - 1)
-        return lm[idx]['ov90']
+    # Compute per-location stats across the FULL SELECTED SLICE
+    all_loc_metrics = D[per_loc_metrics_key]
+
+    def loc_slice(loc):
+        lm = all_loc_metrics.get(loc, [])
+        return lm[start_idx:end_idx + 1] if lm else []
+
+    def loc_total_ov(loc):
+        s = loc_slice(loc)
+        return sum(r['ov90'] for r in s) if s else 0
 
     def loc_avg_ov(loc):
-        lm = all_loc_metrics.get(loc)
-        if lm is None:
-            return stats[loc]['avg_ov']
-        sliced = lm[start_idx:end_idx + 1]
-        if not sliced:
-            return 0
-        return int(round(sum(r['ov90'] for r in sliced) / len(sliced)))
+        s = loc_slice(loc)
+        if not s: return 0
+        return round(sum(r['ov90'] for r in s) / len(s), 1)
 
     def loc_total_closed(loc):
-        lm = all_loc_metrics.get(loc)
-        if lm is None:
-            return stats[loc]['total_closed']
-        sliced = lm[start_idx:end_idx + 1]
-        return sum(r['closed'] for r in sliced)
+        s = loc_slice(loc)
+        return sum(r['closed'] for r in s) if s else 0
 
-    ranked = sorted(scope_locs, key=loc_last_ov, reverse=True)[:20]
+    ranked = sorted(scope_locs, key=loc_total_ov, reverse=True)[:20]
     dynamic_top20 = [{'loc': l,
-                      'last_ov':      loc_last_ov(l),
+                      'last_ov':      loc_total_ov(l),   # reuse key; now = slice total
                       'avg_ov':       loc_avg_ov(l),
                       'total_closed': loc_total_closed(l)} for l in ranked]
 
@@ -1008,14 +1004,12 @@ with tab_combined:
     def cmb_sec(top20):
         car_lm = D['car_metrics']
         pto_lm = D['pto_metrics']
-        def get_ov(loc_metrics, loc):
-            lm = loc_metrics.get(loc)
-            if lm is None:
-                return 0
-            idx = min(end_idx, len(lm) - 1)
-            return lm[idx]['ov90']
-        return [{'CAR ≥90': get_ov(car_lm, i['loc']),
-                 'PTO ≥90': get_ov(pto_lm, i['loc'])} for i in top20]
+        def get_slice_ov(loc_metrics, loc):
+            lm = loc_metrics.get(loc, [])
+            s = lm[start_idx:end_idx + 1] if lm else []
+            return sum(r['ov90'] for r in s) if s else 0
+        return [{'CAR ≥90': get_slice_ov(car_lm, i['loc']),
+                 'PTO ≥90': get_slice_ov(pto_lm, i['loc'])} for i in top20]
     render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
                D['cmb_t_hi'], D['cmb_t_lo'], D['cmb_top20'], 'Total Ov90',
                show_split=True, secondary_cols_fn=cmb_sec)
