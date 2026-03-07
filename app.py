@@ -417,7 +417,7 @@ with st.sidebar:
     date_end_ph   = st.empty()
 
     st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
-    exclude_jn = st.toggle("Exclude JN PTOs", value=True)
+    exclude_jn = st.toggle("Exclude JN PTOs", value=False)
 
     st.markdown('<div class="sidebar-section">Export</div>', unsafe_allow_html=True)
     export_reg_btn = st.button("↓  Regional Summary (Excel)", use_container_width=True)
@@ -434,7 +434,7 @@ with st.sidebar:
 # LOAD DATA
 # ══════════════════════════════════════════════════════════════════
 @st.cache_data(show_spinner="Computing metrics…")
-def get_data(all_file_bytes, exclude_jn=True):
+def get_data(all_file_bytes, exclude_jn=False):
     return load_and_compute_multi(
         [io.BytesIO(b) for b in all_file_bytes], exclude_jn=exclude_jn)
 

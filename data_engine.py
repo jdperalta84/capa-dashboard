@@ -359,7 +359,7 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
 # ══════════════════════════════════════════════════════════════════
 # SHARED PREP HELPERS
 # ══════════════════════════════════════════════════════════════════
-def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=True):
+def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=False):
     """
     Apply all exclusion rules to normalized car and pto DataFrames.
     Both dfs must have: loc, init_date, close_date, days2close,
@@ -393,7 +393,7 @@ def _apply_exclusions(car_df, pto_df, loc_region, exclude_jn=True):
 # ══════════════════════════════════════════════════════════════════
 # MASTER FORMAT PIPELINE
 # ══════════════════════════════════════════════════════════════════
-def _load_master(source, exclude_jn=True):
+def _load_master(source, exclude_jn=False):
     car_raw = _read_source(source, 'Data - CARs')
     pto_raw = _read_source(source, 'Data - PTOs')
 
@@ -436,7 +436,7 @@ def _load_master(source, exclude_jn=True):
 # ══════════════════════════════════════════════════════════════════
 # PIVOT FORMAT PIPELINE
 # ══════════════════════════════════════════════════════════════════
-def _load_pivot(source, exclude_jn=True):
+def _load_pivot(source, exclude_jn=False):
     # ── List source ───────────────────────────────────────────────
     _lr, _lid  = _read_list_source(source)
     loc_region = _lr  or LOCATION_REGION
@@ -594,7 +594,7 @@ def _load_pivot(source, exclude_jn=True):
 # ══════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ══════════════════════════════════════════════════════════════════
-def load_and_compute(file_source, exclude_jn=True) -> dict:
+def load_and_compute(file_source, exclude_jn=False) -> dict:
     if isinstance(file_source, (str, Path)):
         source      = str(file_source)
         source_name = Path(file_source).name
@@ -624,7 +624,7 @@ def load_and_compute(file_source, exclude_jn=True) -> dict:
 # Accepts a list of file sources, combines CARs and PTOs across all,
 # then runs the shared metric engine once on the combined dataset.
 # ══════════════════════════════════════════════════════════════════
-def load_and_compute_multi(file_sources, exclude_jn=True) -> dict:
+def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     """Load and combine multiple year files, then compute metrics."""
     if not file_sources:
         raise ValueError("No files provided")
