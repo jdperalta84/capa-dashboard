@@ -589,42 +589,50 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     cur_wavg     = wavg_vals[-1] if wavg_vals else 0
 
     # ── 6-month trend: compare last 3 months avg vs prior 3 months avg ──
-    # Works on whatever slice is loaded; gracefully degrades if < 6 months
     if NM >= 6:
-        recent_3 = ov_list[-3:]
-        prior_3  = ov_list[-6:-3]
+        recent_3   = ov_list[-3:]
+        prior_3    = ov_list[-6:-3]
         recent_avg = round(np.mean(recent_3), 1)
         prior_avg  = round(np.mean(prior_3),  1)
-        delta      = recent_avg - prior_avg
-        if delta > 0.5:
-            trend_val   = f'+{delta:.1f}'
-            trend_lbl   = 'Worsening (last 3 vs prior 3 mo)'
+        if prior_avg > 0:
+            pct_change = int(round((recent_avg - prior_avg) / prior_avg * 100))
+        else:
+            pct_change = 0 if recent_avg == 0 else 100
+        abs_delta = recent_avg - prior_avg
+
+        if abs_delta > 0.5:
             trend_icon  = '▲'
             trend_color = '#c0392b'
-            trend_sub   = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
-        elif delta < -0.5:
-            trend_val   = f'{delta:.1f}'
-            trend_lbl   = 'Improving (last 3 vs prior 3 mo)'
+            trend_lbl   = 'Worsening (last 3 vs prior 3 mo)'
+        elif abs_delta < -0.5:
             trend_icon  = '▼'
             trend_color = '#0d7a4e'
-            trend_sub   = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
+            trend_lbl   = 'Improving (last 3 vs prior 3 mo)'
         else:
-            trend_val   = '±0'
-            trend_lbl   = 'Stable (last 3 vs prior 3 mo)'
             trend_icon  = '→'
             trend_color = '#5a6577'
-            trend_sub   = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
+            trend_lbl   = 'Stable (last 3 vs prior 3 mo)'
+
+        sign         = '+' if pct_change > 0 else ''
+        trend_val    = f'{sign}{pct_change}%'
+        trend_sub    = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
         trend_display = f'{trend_icon} {trend_val}'
+
     elif NM >= 2:
-        # Fallback: just last vs prev month
-        prev_ov     = ov_list[-2]
-        delta       = last_ov - prev_ov
-        trend_val   = f'+{delta}' if delta > 0 else str(delta)
-        trend_icon  = '▲' if delta > 0 else ('▼' if delta < 0 else '→')
-        trend_color = '#c0392b' if delta > 0 else ('#0d7a4e' if delta < 0 else '#5a6577')
+        prev_ov    = ov_list[-2]
+        abs_delta  = last_ov - prev_ov
+        if prev_ov > 0:
+            pct_change = int(round(abs_delta / prev_ov * 100))
+        else:
+            pct_change = 0 if last_ov == 0 else 100
+        trend_icon  = '▲' if abs_delta > 0 else ('▼' if abs_delta < 0 else '→')
+        trend_color = '#c0392b' if abs_delta > 0 else ('#0d7a4e' if abs_delta < 0 else '#5a6577')
+        sign        = '+' if pct_change > 0 else ''
+        trend_val   = f'{sign}{pct_change}%'
         trend_lbl   = f'Open ≥90: {last_month} vs prior month'
-        trend_sub   = f'{last_ov} vs {prev_ov}'
+        trend_sub   = f'Avg ≥90: {last_ov} vs {prev_ov}'
         trend_display = f'{trend_icon} {trend_val}'
+
     else:
         trend_display = '—'
         trend_lbl     = 'Insufficient data'
