@@ -53,9 +53,11 @@ def export_excel(D: dict, data_key: str, label: str) -> bytes:
         for i, (m_label, row, wv) in enumerate(zip(months, metrics, wavg_vals)):
             r    = 3 + i
             fill = alt1 if i % 2 == 0 else alt2
-            prev_ov = metrics[i-1]['ov90'] if i > 0 else None
-            trend   = '—' if prev_ov is None else ('▲' if row['ov90'] > prev_ov else ('▼' if row['ov90'] < prev_ov else '→'))
+            # Trend: compare monthly figures (ov90_mo), not YTD running totals
+            prev_mo = metrics[i-1]['ov90_mo'] if i > 0 else None
+            trend   = '—' if prev_mo is None else ('▲' if row['ov90_mo'] > prev_mo else ('▼' if row['ov90_mo'] < prev_mo else '→'))
 
+            # ov90 in table = YTD running total (Jan 1 → end of this month)
             vals = [m_label, row['closed'], row['avg_days'], row['ov90']]
             if tab_name == 'Combined':
                 vals += [row.get('ov90_car', 0), row.get('ov90_pto', 0)]
@@ -87,7 +89,7 @@ def export_excel(D: dict, data_key: str, label: str) -> bytes:
         sc_vals  = [sum(r['closed'] for r in metrics),
                     round(sum(r['avg_days'] for r in metrics if r['closed']>0) /
                           max(sum(1 for r in metrics if r['closed']>0), 1)),
-                    round(sum(r['ov90'] for r in metrics) / len(metrics))]
+                    round(sum(r['ov90_mo'] for r in metrics) / len(metrics))]
         if tab_name == 'Combined':
             sc_vals += [round(sum(r.get('ov90_car',0) for r in metrics)/len(metrics)),
                         round(sum(r.get('ov90_pto',0) for r in metrics)/len(metrics))]

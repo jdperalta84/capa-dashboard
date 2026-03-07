@@ -250,27 +250,46 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map):
     def calc(closed_df, loc_key):
         c    = filter_df(closed_df, loc_key)
         rows = []
+        ytd_ov90 = 0
+        cur_year = months[0].year if len(months) > 0 else None
         for m in months:
+            if m.year != cur_year:       # January reset
+                ytd_ov90 = 0
+                cur_year = m.year
             mc   = c[c['close_month'] == m]
             cnt  = len(mc)
             avg  = int(round(mc['days2close'].mean())) if cnt > 0 else 0
-            # ov90: closed this month AND took >= 90 days
-            ov90 = int((mc['days2close'] >= 90).sum()) if cnt > 0 else 0
-            rows.append({'closed': cnt, 'avg_days': avg, 'ov90': ov90,
+            # ov90_mo: closed THIS month AND took >= 90 days (monthly figure)
+            ov90_mo  = int((mc['days2close'] >= 90).sum()) if cnt > 0 else 0
+            ytd_ov90 += ov90_mo
+            rows.append({'closed': cnt, 'avg_days': avg,
+                         'ov90':     ytd_ov90,   # YTD cumulative from Jan 1, resets each year
+                         'ov90_mo':  ov90_mo,    # raw monthly figure (kept for internal use)
                          'total_days': cnt * avg})
         return rows
 
     def calc_combined(loc_key):
         cd, pd_ = car_metrics[loc_key], pto_metrics[loc_key]
         rows = []
-        for i in range(NM):
+        ytd_ov90 = 0
+        cur_year = months[0].year if len(months) > 0 else None
+        for i, m in enumerate(months):
+            if m.year != cur_year:
+                ytd_ov90 = 0
+                cur_year = m.year
             c, p  = cd[i], pd_[i]
             total = c['closed'] + p['closed']
             avg   = int(round((c['total_days'] + p['total_days']) / total)) if total > 0 else 0
+            mo_ov90     = c['ov90_mo'] + p['ov90_mo']
+            ytd_ov90   += mo_ov90
+            mo_car_ov90 = c['ov90_mo']
+            mo_pto_ov90 = p['ov90_mo']
             rows.append({'closed': total, 'avg_days': avg,
-                         'ov90':     c['ov90'] + p['ov90'],
-                         'ov90_car': c['ov90'], 'ov90_pto': p['ov90'],
-                         'total_days': c['total_days'] + p['total_days']})
+                         'ov90':         ytd_ov90,
+                         'ov90_mo':      mo_ov90,
+                         'ov90_car':     mo_car_ov90,
+                         'ov90_pto':     mo_pto_ov90,
+                         'total_days':   c['total_days'] + p['total_days']})
         return rows
 
     def running_wavg(rows):

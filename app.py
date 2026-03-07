@@ -580,18 +580,19 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     last_dec_idx_full = D['last_dec_idx']
     ye_label          = f"{last_dec_yr} YE"
 
-    closed_list  = [r['closed']   for r in metrics]
-    ov_list      = [r['ov90']     for r in metrics]
+    closed_list  = [r['closed']    for r in metrics]
+    ov_list      = [r['ov90']      for r in metrics]   # YTD running total per month
+    ov_mo_list   = [r['ov90_mo']   for r in metrics]   # monthly figure (for avg & trend)
 
     total_closed = sum(closed_list)
-    avg_ov90     = int(round(np.mean(ov_list))) if ov_list else 0
-    last_ov      = ov_list[-1] if ov_list else 0
+    avg_ov90     = int(round(np.mean(ov_mo_list))) if ov_mo_list else 0
+    last_ov      = ov_list[-1] if ov_list else 0       # YTD through last month in slice
     cur_wavg     = wavg_vals[-1] if wavg_vals else 0
 
-    # ── 6-month trend: compare last 3 months avg vs prior 3 months avg ──
+    # ── 6-month trend: compare last 3 months avg vs prior 3 months avg (monthly figures) ──
     if NM >= 6:
-        recent_3   = ov_list[-3:]
-        prior_3    = ov_list[-6:-3]
+        recent_3   = ov_mo_list[-3:]
+        prior_3    = ov_mo_list[-6:-3:]
         recent_avg = round(np.mean(recent_3), 1)
         prior_avg  = round(np.mean(prior_3),  1)
         if prior_avg > 0:
@@ -636,8 +637,8 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
                              if m.endswith(str(last_dec_yr))), last_dec_idx_full - 11)
     ye_slice         = full_m[ye_start_idx:last_dec_idx_full + 1]
     ye_closed        = sum(r['closed'] for r in ye_slice)
-    ye_avg_ov90      = int(round(np.mean([r['ov90'] for r in ye_slice])))
-    ye_last_ov       = full_m[last_dec_idx_full]['ov90']
+    ye_avg_ov90      = int(round(np.mean([r['ov90_mo'] for r in ye_slice])))
+    ye_last_ov       = full_m[last_dec_idx_full]['ov90']   # YTD through Dec
     ye_wavg          = full_w[last_dec_idx_full]
     ye_ov_color      = ov_color(ye_last_ov, t_hi, t_lo)[0]
     ye_trend_lbl     = f"Dec {last_dec_yr}: {ye_last_ov} open >90d"
@@ -689,8 +690,8 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
 # CHART  (sliced to selected date range)
 # ══════════════════════════════════════════════════════════════════
 def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
-    closed   = [r['closed']   for r in sliced_metrics]
-    ov90     = [r['ov90']     for r in sliced_metrics]
+    closed   = [r['closed']    for r in sliced_metrics]
+    ov90     = [r['ov90_mo']   for r in sliced_metrics]   # monthly figure for chart bars
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
