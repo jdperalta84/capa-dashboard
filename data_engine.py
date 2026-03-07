@@ -499,14 +499,19 @@ def _load_pivot(source, exclude_jn=True):
     if not all([loc_col, init_col, close_col]):
         raise ValueError(f"Cannot find required CAR columns. Found: {car_raw.columns.tolist()}")
 
-    # For CARs: close date column priority order
-    # 1. Effectiveness Review (closed date) — 2025 style
-    # 2. Corrective Action Approved Date — 2026 style (when Effectiveness is empty)
-    # NOTE: 'Complete corrective actions (Approved Date)' is an INTERMEDIATE step, not close date
-    #       We explicitly exclude 'complete' to avoid picking it up
+    # For CARs: close date column priority order (per-row waterfall)
+    # 1. 'Effectiveness Review (Closed Date)' — present in both years; populated in ~32/423 2025 rows
+    # 2. 'Corrective Action Approved Date' — 2026 column name
+    # 3. 'Complete corrective actions (Approved Date)' — 2025 column name (382/423 2025 rows use this)
+    # The waterfall in prep_car takes the first non-null value per row, so order matters.
     _eff_col      = _find_col(car_raw.columns, 'effectiveness')
-    _approved_col = _find_col(car_raw.columns, 'corrective action approved', exclude=['complete'])                     or _find_col(car_raw.columns, 'approved', 'date', exclude=['complete', 'action plan'])
-    car_close_candidates = [c for c in [_eff_col, _approved_col] if c is not None]
+    _appr_2026    = _find_col(car_raw.columns, 'corrective action approved') \
+                    or _find_col(car_raw.columns, 'corrective', 'approved', 'date',
+                                 exclude=['complete corrective', 'action plan'])
+    _appr_2025    = _find_col(car_raw.columns, 'complete corrective', 'approved') \
+                    or _find_col(car_raw.columns, 'complete', 'approved', 'date',
+                                 exclude=['action plan', 'effectiveness'])
+    car_close_candidates = [c for c in [_eff_col, _appr_2026, _appr_2025] if c is not None]
     # Deduplicate preserving order
     seen = set()
     car_close_candidates = [c for c in car_close_candidates
