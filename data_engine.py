@@ -129,14 +129,26 @@ def _detect_format(source):
         source.seek(0)
     xl     = pd.read_excel(source, sheet_name=None, nrows=2)
     sheets = list(xl.keys())
+
+    # Master format: normalized merge output
     if 'Data - CARs' in sheets:
         cols = [str(c).strip().lower() for c in xl['Data - CARs'].columns]
         if 'car_number' in cols or 'location' in cols:
             return 'master'
+
+    # Pivot format: legacy snapshot with separate open PTO sheet
     if 'Open data - PTOs' in sheets:
         return 'pivot'
+
+    # Pivot format: year-file with sheets like "CAR '26", "PTO '26", "Assessment '26"
+    has_car = any('CAR' in s.upper() for s in sheets)
+    has_pto = any('PTO' in s.upper() for s in sheets)
+    if has_car and has_pto:
+        return 'pivot'
+
     if 'Data - CARs' in sheets:
         return 'pivot'
+
     raise ValueError(f"Unrecognised file format. Sheets: {sheets}")
 
 
@@ -408,8 +420,34 @@ def _load_pivot(source, exclude_jn=True):
     # ── List source ───────────────────────────────────────────────
     loc_region = _read_list_source(source) or LOCATION_REGION
 
+    # ── Detect sheet names dynamically ────────────────────────────
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
+    all_sheets = pd.ExcelFile(source).sheet_names
+
+    def find_sheet(keyword, exclude_keywords=None):
+        """Find sheet whose name contains keyword (case-insensitive),
+        excluding sheets that contain any exclude_keywords."""
+        exclude_keywords = exclude_keywords or []
+        for s in all_sheets:
+            su = s.upper()
+            if keyword.upper() in su:
+                if not any(e.upper() in su for e in exclude_keywords):
+                    return s
+        return None
+
+    # CAR sheet: matches 'CAR' but not Assessment/PAR/CAF
+    car_sheet = find_sheet('CAR', exclude_keywords=['ASSESSMENT', 'PAR', 'CAF', 'PIVOT'])
+    # PTO sheet: matches 'PTO' but not pivot/open report
+    pto_sheet = find_sheet('PTO', exclude_keywords=['PIVOT', 'REPORT', 'CAR_PTO', 'LOCATION'])
+
+    if not car_sheet:
+        raise ValueError(f"Cannot find CAR sheet. Sheets: {all_sheets}")
+    if not pto_sheet:
+        raise ValueError(f"Cannot find PTO sheet. Sheets: {all_sheets}")
+
     # ── CARs ──────────────────────────────────────────────────────
-    car_raw = _read_source(source, 'Data - CARs', header=0)
+    car_raw = _read_source(source, car_sheet, header=0)
     car_raw.columns = car_raw.columns.str.strip()
 
     # Flexible column detection
@@ -450,7 +488,7 @@ def _load_pivot(source, exclude_jn=True):
         return df
 
     # ── PTOs ──────────────────────────────────────────────────────
-    pto_raw = _read_source(source, 'Open data - PTOs', header=0)
+    pto_raw = _read_source(source, pto_sheet, header=0)
     pto_raw.columns = pto_raw.columns.str.strip()
 
     pto_loc_col      = _find_col(pto_raw.columns, 'location', 'drop') \
