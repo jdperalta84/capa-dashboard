@@ -14,154 +14,349 @@ st.set_page_config(page_title="CAPA · PTO Dashboard", page_icon="📋",
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
-/* ── Sidebar ── */
-section[data-testid="stSidebar"] {
-    background: #0d1117;
-    border-right: 1px solid #21262d;
+/* ══════════════════════════════════════════════
+   CSS VARIABLES — change one place, updates all
+   ══════════════════════════════════════════════ */
+:root {
+    --navy:      #0f1c2e;
+    --navy-mid:  #1a2d45;
+    --navy-soft: #243b55;
+    --accent:    #8C1D18;
+    --accent-lt: #f9e8e7;
+    --canvas:    #f4f6f9;
+    --surface:   #ffffff;
+    --border:    #e2e6ed;
+    --border-dk: #c8cfd8;
+    --txt-primary: #0f1c2e;
+    --txt-secondary: #5a6577;
+    --txt-muted:  #9aa3b0;
+    --green:  #0d7a4e;
+    --green-lt: #dcf5ec;
+    --amber:  #b45309;
+    --amber-lt: #fef3c7;
+    --red:    #c0392b;
+    --red-lt: #fdecea;
+    --mono: 'DM Mono', 'Courier New', monospace;
+    --sans: 'DM Sans', system-ui, sans-serif;
 }
-section[data-testid="stSidebar"] * { color: #c9d1d9 !important; }
-section[data-testid="stSidebar"] .stSelectbox > div > div {
-    background: #161b22 !important;
-    border: 1px solid #30363d !important;
-    border-radius: 6px !important;
-    color: #c9d1d9 !important;
-}
-section[data-testid="stSidebar"] .stFileUploader {
-    background: #161b22;
-    border: 1px dashed #30363d;
-    border-radius: 8px;
-    padding: 0.5rem;
-}
-section[data-testid="stSidebar"] .stButton > button {
-    background: #21262d !important;
-    color: #c9d1d9 !important;
-    border: 1px solid #30363d !important;
-    border-radius: 6px !important;
-    font-size: 0.78rem !important;
-    padding: 0.4rem 0.8rem !important;
-    width: 100%;
-}
-section[data-testid="stSidebar"] .stButton > button:hover {
-    background: #30363d !important;
-    border-color: #58a6ff !important;
+
+/* ── Reset & Base ── */
+html, body, [class*="css"] {
+    font-family: var(--sans);
+    color: var(--txt-primary);
 }
 
 /* ── Main canvas ── */
-.main { background: #f6f8fa; }
-.block-container { padding: 1.5rem 2rem 2rem; max-width: 1400px; }
+.main { background: var(--canvas) !important; }
+.block-container {
+    padding: 1.4rem 2rem 2.5rem !important;
+    max-width: 1480px !important;
+}
 
-/* ── Page header ── */
+/* ══════════════════════════════════════════════
+   SIDEBAR — deep navy, instrument panel feel
+   ══════════════════════════════════════════════ */
+section[data-testid="stSidebar"] {
+    background: var(--navy) !important;
+    border-right: 1px solid var(--navy-soft) !important;
+}
+section[data-testid="stSidebar"] * {
+    color: #c8d6e8 !important;
+    font-family: var(--sans) !important;
+}
+section[data-testid="stSidebar"] .stSelectbox > div > div {
+    background: var(--navy-mid) !important;
+    border: 1px solid var(--navy-soft) !important;
+    border-radius: 5px !important;
+    color: #c8d6e8 !important;
+    font-size: 0.8rem !important;
+}
+section[data-testid="stSidebar"] .stFileUploader {
+    background: var(--navy-mid) !important;
+    border: 1px dashed var(--navy-soft) !important;
+    border-radius: 7px !important;
+    padding: 0.5rem !important;
+}
+section[data-testid="stSidebar"] .stButton > button {
+    background: var(--navy-mid) !important;
+    color: #a8c4e0 !important;
+    border: 1px solid var(--navy-soft) !important;
+    border-radius: 5px !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.02em !important;
+    padding: 0.45rem 0.9rem !important;
+    width: 100% !important;
+    transition: all 0.15s ease !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: var(--navy-soft) !important;
+    border-color: #A52320 !important;
+    color: #ffe8e7 !important;
+}
+section[data-testid="stSidebar"] .stToggle span { color: #c8d6e8 !important; }
+
+.sidebar-section {
+    font-size: 0.58rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: #4a6380 !important;
+    padding: 0.25rem 0 0.3rem;
+    margin: 1rem 0 0.5rem;
+    border-bottom: 1px solid #1e3050;
+}
+
+/* ══════════════════════════════════════════════
+   PAGE HEADER
+   ══════════════════════════════════════════════ */
 .page-header {
-    padding: 1.2rem 1.5rem;
-    background: white;
-    border-radius: 12px;
-    border: 1px solid #e1e4e8;
+    padding: 1rem 1.5rem;
+    background: var(--navy);
+    border-radius: 10px;
     margin-bottom: 1.2rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    box-shadow: 0 2px 12px rgba(15,28,46,0.18);
+    position: relative;
+    overflow: hidden;
+}
+.page-header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #8C1D18 0%, #C0392B 50%, #8C1D18 100%);
 }
 .page-title {
-    font-size: 1.35rem; font-weight: 700; color: #0d1117;
-    letter-spacing: -0.02em; margin: 0; line-height: 1.2;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #e8f4ff !important;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1.3;
 }
 .page-meta {
-    font-size: 0.75rem; color: #8b949e; margin-top: 0.3rem;
-    display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: #6a8aaa !important;
+    margin-top: 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
 }
-.page-meta .dot { color: #d0d7de; }
+.page-meta .dot { color: #2a4060 !important; }
 .page-meta .pill {
-    background: #f0f6ff; color: #0550ae;
-    padding: 1px 8px; border-radius: 20px;
-    font-size: 0.7rem; font-weight: 500;
+    background: rgba(140,29,24,0.15);
+    color: #e8a0a0 !important;
+    padding: 2px 9px;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border: 1px solid rgba(140,29,24,0.25);
+    letter-spacing: 0.02em;
 }
-.page-meta .pill-green { background: #dafbe1; color: #116329; }
+.page-meta .pill-green {
+    background: rgba(13,122,78,0.2);
+    color: #4fd1a0 !important;
+    border-color: rgba(13,122,78,0.3);
+}
 .date-range-badge {
-    background: #fff8e1; color: #7d5a00;
-    padding: 2px 10px; border-radius: 20px;
-    font-size: 0.72rem; font-weight: 600;
-    border: 1px solid #f0c040;
+    background: rgba(180,83,9,0.2);
+    color: #fbbf24 !important;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border: 1px solid rgba(251,191,36,0.25);
+    font-family: var(--mono);
 }
 
-/* ── Metric cards ── */
-.cards-row { display: flex; gap: 0.9rem; margin-bottom: 1.2rem; }
+/* ══════════════════════════════════════════════
+   METRIC CARDS
+   ══════════════════════════════════════════════ */
 .metric-card {
-    background: white; border-radius: 10px;
-    padding: 1.1rem 1.3rem; border-left: 3px solid;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    flex: 1; min-width: 0;
-    transition: box-shadow 0.15s;
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    border: 1px solid var(--border);
+    border-top: 3px solid;
+    box-shadow: 0 1px 4px rgba(15,28,46,0.06), 0 0 0 0 transparent;
+    flex: 1;
+    min-width: 0;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
-.metric-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,0.1); }
-.metric-val   { font-size: 1.8rem; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
-.metric-lbl   { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.09em;
-                color: #8b949e; margin-top: 0.35rem; font-weight: 500; }
-.metric-sub   { font-size: 0.72rem; color: #adb5bd; margin-top: 0.1rem; }
-.metric-divider { height: 1px; background: #f0f0f0; margin: 0.6rem 0; }
-.metric-ye-lbl  { font-size: 0.62rem; color: #adb5bd; text-transform: uppercase;
-                  letter-spacing: 0.08em; font-weight: 500; }
-.metric-ye-val  { font-size: 0.9rem; font-weight: 600; }
+.metric-card:hover {
+    box-shadow: 0 4px 16px rgba(15,28,46,0.12);
+    transform: translateY(-1px);
+}
+.metric-val {
+    font-family: var(--mono);
+    font-size: 1.7rem;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: -0.03em;
+}
+.metric-lbl {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--txt-muted);
+    margin-top: 0.4rem;
+    font-weight: 600;
+}
+.metric-sub {
+    font-size: 0.7rem;
+    color: var(--txt-muted);
+    margin-top: 0.15rem;
+    font-family: var(--mono);
+}
+.metric-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0.65rem 0 0.5rem;
+}
+.metric-ye-lbl {
+    font-size: 0.58rem;
+    color: var(--txt-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+}
+.metric-ye-val {
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    font-weight: 500;
+    margin-top: 0.15rem;
+}
 
-/* ── Section headers ── */
+/* ══════════════════════════════════════════════
+   SECTION HEADERS
+   ══════════════════════════════════════════════ */
 .section-hdr {
-    font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.12em; color: #8b949e;
-    border-bottom: 1px solid #e1e4e8;
-    padding-bottom: 0.35rem; margin-bottom: 0.9rem; margin-top: 1.4rem;
-}
-.sidebar-section {
-    font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.12em; color: #484f58;
-    padding-bottom: 0.3rem; margin-bottom: 0.6rem; margin-top: 1.1rem;
-    border-bottom: 1px solid #21262d;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--txt-muted);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 0.4rem;
+    margin-bottom: 0.85rem;
+    margin-top: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
 }
 
-/* ── Tabs ── */
+/* ══════════════════════════════════════════════
+   TABS — clean pill switcher
+   ══════════════════════════════════════════════ */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 2px; background: #eaedf0; padding: 3px; border-radius: 9px;
+    gap: 3px;
+    background: var(--border);
+    padding: 3px;
+    border-radius: 8px;
+    border: none !important;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 6px; padding: 0.4rem 1.2rem; font-size: 0.8rem;
-    font-weight: 500; color: #57606a; background: transparent; border: none;
+    border-radius: 5px;
+    padding: 0.45rem 1.3rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--txt-secondary);
+    background: transparent;
+    border: none;
+    letter-spacing: 0.01em;
+    transition: all 0.15s;
 }
 .stTabs [aria-selected="true"] {
-    background: white !important; color: #0d1117 !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    background: #8C1D18 !important;
+    color: #fff0ef !important;
+    box-shadow: 0 1px 4px rgba(140,29,24,0.35) !important;
     font-weight: 600 !important;
 }
 
-/* ── Overdue pill ── */
+/* ══════════════════════════════════════════════
+   OVERDUE PILL
+   ══════════════════════════════════════════════ */
 .ov-pill {
-    padding: 2px 11px; border-radius: 20px;
-    font-size: 0.76rem; font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.74rem;
+    font-weight: 700;
     display: inline-block;
+    font-family: var(--mono);
+    letter-spacing: 0.02em;
 }
 
-/* ── Top 20 table ── */
-.top20-hdr {
-    font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.1em; color: #8b949e; padding: 0.4rem 0;
-    border-bottom: 2px solid #e1e4e8; margin-bottom: 0.2rem;
-}
+/* ══════════════════════════════════════════════
+   TOP 20 TABLE
+   ══════════════════════════════════════════════ */
 .top20-row {
-    padding: 0.35rem 0; border-bottom: 1px solid #f6f8fa;
-    font-size: 0.82rem;
+    padding: 0.32rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.81rem;
 }
 
-/* ── Chart container ── */
+/* ══════════════════════════════════════════════
+   CHART CONTAINER
+   ══════════════════════════════════════════════ */
 .chart-wrap {
-    background: white; border-radius: 10px;
-    border: 1px solid #e1e4e8; padding: 0.5rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 0.5rem;
+    box-shadow: 0 1px 4px rgba(15,28,46,0.05);
 }
 
-/* ── Download button ── */
-.stDownloadButton > button {
-    background: #0d1117 !important; color: white !important;
-    border: none !important; border-radius: 6px !important;
-    font-size: 0.78rem !important;
+/* ══════════════════════════════════════════════
+   DATAFRAME / TABLE OVERRIDES
+   ══════════════════════════════════════════════ */
+[data-testid="stDataFrame"] th {
+    background: var(--navy) !important;
+    color: #a8c4e0 !important;
+    font-size: 0.68rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    font-family: var(--sans) !important;
 }
+[data-testid="stDataFrame"] td {
+    font-family: var(--mono) !important;
+    font-size: 0.78rem !important;
+    color: var(--txt-primary) !important;
+}
+
+/* ══════════════════════════════════════════════
+   BUTTONS — DOWNLOAD
+   ══════════════════════════════════════════════ */
+.stDownloadButton > button {
+    background: var(--navy) !important;
+    color: #c8d6e8 !important;
+    border: 1px solid var(--navy-soft) !important;
+    border-radius: 5px !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.03em !important;
+    transition: all 0.15s !important;
+}
+.stDownloadButton > button:hover {
+    background: var(--navy-soft) !important;
+    color: #e8f4ff !important;
+}
+
+/* ══════════════════════════════════════════════
+   MISC POLISH
+   ══════════════════════════════════════════════ */
+/* Remove default Streamlit red top bar */
+#MainMenu, footer, header { visibility: hidden; }
+/* Tighten column gaps slightly */
+[data-testid="column"] { padding: 0 0.3rem !important; }
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--canvas); }
+::-webkit-scrollbar-thumb { background: var(--border-dk); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--txt-muted); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -170,16 +365,21 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 # ══════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("""
-    <div style="padding:1rem 0 0.5rem">
-      <div style="font-size:1rem;font-weight:700;color:#e6edf3;letter-spacing:-0.01em">
-        CAPA · PTO
+    <div style="padding:1.1rem 0 0.6rem">
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem">
+        <div style="width:28px;height:28px;background:linear-gradient(135deg,#A52320,#6b1210);
+                    border-radius:6px;display:flex;align-items:center;justify-content:center;
+                    font-size:0.85rem;flex-shrink:0">📋</div>
+        <div style="font-size:1.0rem;font-weight:700;color:#e8f4ff;letter-spacing:-0.01em;
+                    font-family:'DM Sans',sans-serif">CAPA · PTO</div>
       </div>
-      <div style="font-size:0.65rem;color:#484f58;text-transform:uppercase;
-                  letter-spacing:0.12em;margin-top:3px">
-        Performance Dashboard
+      <div style="font-size:0.58rem;color:#3d5a78;text-transform:uppercase;
+                  letter-spacing:0.16em;padding-left:2px">
+        Quality Performance Dashboard
       </div>
     </div>
-    <div style="height:1px;background:#21262d;margin-bottom:0.5rem"></div>
+    <div style="height:1px;background:linear-gradient(90deg,#8C1D18 0%,#1a2d45 100%);
+                margin-bottom:0.5rem"></div>
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="sidebar-section">Data Source</div>', unsafe_allow_html=True)
@@ -204,11 +404,11 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">Export</div>', unsafe_allow_html=True)
     export_reg_btn = st.button("↓  Regional Summary (Excel)", use_container_width=True)
     st.markdown("""
-    <div style="font-size:0.65rem;color:#484f58;margin-top:0.3rem;line-height:1.5">
+    <div style="font-size:0.62rem;color:#3d5a78;margin-top:0.4rem;line-height:1.6">
       PDF: browser Print → Save as PDF
     </div>""", unsafe_allow_html=True)
 
-    st.markdown('<div style="height:1px;background:#21262d;margin:1rem 0 0.5rem"></div>',
+    st.markdown('<div style="height:1px;background:#1a2d45;margin:1rem 0 0.5rem"></div>',
                 unsafe_allow_html=True)
     loaded_at_ph = st.empty()
 
@@ -240,10 +440,13 @@ elif "data" not in st.session_state:
     st.markdown("""
     <div style="display:flex;align-items:center;justify-content:center;
                 height:60vh;flex-direction:column;gap:1rem">
-      <div style="font-size:2.5rem">📋</div>
-      <div style="font-size:1.1rem;font-weight:600;color:#0d1117">Upload your Excel file</div>
-      <div style="font-size:0.85rem;color:#8b949e;text-align:center;max-width:320px">
-        Drag and drop your CAPA/PTO Excel file into the sidebar uploader to get started.
+      <div style="width:60px;height:60px;background:linear-gradient(135deg,#A52320,#6b1210);
+                  border-radius:14px;display:flex;align-items:center;justify-content:center;
+                  font-size:1.8rem;box-shadow:0 4px 20px rgba(30,111,217,0.3)">📋</div>
+      <div style="font-size:1.1rem;font-weight:700;color:#0f1c2e">Upload your Excel file</div>
+      <div style="font-size:0.85rem;color:#9aa3b0;text-align:center;max-width:300px;
+                  line-height:1.6">
+        Drag and drop your CAPA/PTO tracking file into the sidebar uploader to get started.
       </div>
     </div>""", unsafe_allow_html=True)
     st.stop()
@@ -253,10 +456,14 @@ D = st.session_state.data
 with loaded_at_ph:
     fname = st.session_state.get("filename", "")
     st.markdown(f"""
-    <div style="font-size:0.65rem;color:#484f58;line-height:1.6">
-      <div style="color:#8b949e">Last loaded</div>
-      <div style="color:#c9d1d9">{D['loaded_at']}</div>
-      <div style="color:#484f58;margin-top:2px;word-break:break-all">{fname}</div>
+    <div style="font-size:0.65rem;color:#3d5a78;line-height:1.7;
+                padding:0.6rem 0.5rem;background:#0d1829;border-radius:5px;
+                border:1px solid #1a2d45">
+      <div style="color:#4a6380;font-size:0.56rem;text-transform:uppercase;
+                  letter-spacing:0.12em;margin-bottom:2px">Last Loaded</div>
+      <div style="color:#e8a0a0;font-family:'DM Mono',monospace">{D['loaded_at']}</div>
+      <div style="color:#2a4060;margin-top:3px;word-break:break-all;
+                  font-size:0.6rem">{fname}</div>
     </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════
@@ -330,14 +537,14 @@ def slice_data(lst):
 # HELPERS
 # ══════════════════════════════════════════════════════════════════
 def ov_color(val, t_hi, t_lo):
-    if val > t_hi:   return '#ef4444', '#fff'
-    elif val > t_lo: return '#f59e0b', '#1a1a1a'
-    else:            return '#22c55e', '#fff'
+    if val > t_hi:   return '#c0392b', '#fff'
+    elif val > t_lo: return '#b45309', '#fff'
+    else:            return '#0d7a4e', '#fff'
 
 THEME = {
-    'car':      {'primary': '#2563eb', 'bar2': '#f97316', 'line': '#dc2626', 'wavg': '#94a3b8'},
-    'pto':      {'primary': '#16a34a', 'bar2': '#fb923c', 'line': '#991b1b', 'wavg': '#94a3b8'},
-    'combined': {'primary': '#7c3aed', 'bar2': '#f97316', 'line': '#dc2626', 'wavg': '#94a3b8'},
+    'car':      {'primary': '#1e6fd9', 'bar2': '#e07b39', 'line': '#c0392b', 'wavg': '#9aa3b0'},
+    'pto':      {'primary': '#0d7a4e', 'bar2': '#e07b39', 'line': '#8b1a1a', 'wavg': '#9aa3b0'},
+    'combined': {'primary': '#8C1D18', 'bar2': '#e07b39', 'line': '#5a6577', 'wavg': '#9aa3b0'},
 }
 
 def get_full(key):  return D[key].get(data_key, D[key]['ALL'])
@@ -349,51 +556,80 @@ def get_sliced(key):return slice_data(D[key].get(data_key, D[key]['ALL']))
 def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     NM           = len(metrics)
     last_month   = slice_months[-1] if slice_months else all_months[-1]
-    prev_month   = slice_months[-2] if len(slice_months) > 1 else last_month
 
     # YE benchmark: always last complete year (dynamic, not hardcoded)
-    last_dec_yr  = D['last_dec_year']
+    last_dec_yr       = D['last_dec_year']
     last_dec_idx_full = D['last_dec_idx']
-    ye_label     = f"{last_dec_yr} YE"
-
-    # Find Dec position within sliced range (may be outside slice)
-    dec_in_slice = last_dec_idx_full - start_idx
-    has_dec      = 0 <= dec_in_slice < NM
+    ye_label          = f"{last_dec_yr} YE"
 
     closed_list  = [r['closed']   for r in metrics]
-    avg_list     = [r['avg_days'] for r in metrics if r['closed'] > 0]
     ov_list      = [r['ov90']     for r in metrics]
 
     total_closed = sum(closed_list)
-    avg_days_val = int(round(np.mean(avg_list))) if avg_list else 0
     avg_ov90     = int(round(np.mean(ov_list))) if ov_list else 0
     last_ov      = ov_list[-1] if ov_list else 0
-    prev_ov      = ov_list[-2] if NM > 1 else last_ov
     cur_wavg     = wavg_vals[-1] if wavg_vals else 0
 
-    # YE values — from full data if Dec is outside slice, else from slice
+    # ── 6-month trend: compare last 3 months avg vs prior 3 months avg ──
+    # Works on whatever slice is loaded; gracefully degrades if < 6 months
+    if NM >= 6:
+        recent_3 = ov_list[-3:]
+        prior_3  = ov_list[-6:-3]
+        recent_avg = round(np.mean(recent_3), 1)
+        prior_avg  = round(np.mean(prior_3),  1)
+        delta      = recent_avg - prior_avg
+        if delta > 0.5:
+            trend_val   = f'+{delta:.1f}'
+            trend_lbl   = 'Worsening (last 3 vs prior 3 mo)'
+            trend_icon  = '▲'
+            trend_color = '#c0392b'
+            trend_sub   = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
+        elif delta < -0.5:
+            trend_val   = f'{delta:.1f}'
+            trend_lbl   = 'Improving (last 3 vs prior 3 mo)'
+            trend_icon  = '▼'
+            trend_color = '#0d7a4e'
+            trend_sub   = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
+        else:
+            trend_val   = '±0'
+            trend_lbl   = 'Stable (last 3 vs prior 3 mo)'
+            trend_icon  = '→'
+            trend_color = '#5a6577'
+            trend_sub   = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
+        trend_display = f'{trend_icon} {trend_val}'
+    elif NM >= 2:
+        # Fallback: just last vs prev month
+        prev_ov     = ov_list[-2]
+        delta       = last_ov - prev_ov
+        trend_val   = f'+{delta}' if delta > 0 else str(delta)
+        trend_icon  = '▲' if delta > 0 else ('▼' if delta < 0 else '→')
+        trend_color = '#c0392b' if delta > 0 else ('#0d7a4e' if delta < 0 else '#5a6577')
+        trend_lbl   = f'Open ≥90: {last_month} vs prior month'
+        trend_sub   = f'{last_ov} vs {prev_ov}'
+        trend_display = f'{trend_icon} {trend_val}'
+    else:
+        trend_display = '—'
+        trend_lbl     = 'Insufficient data'
+        trend_sub     = 'Need ≥2 months'
+        trend_color   = '#9aa3b0'
+
+    # YE values
     full_m  = get_full('car_metrics' if closed_label == 'CARs Closed'
                        else ('pto_metrics' if closed_label == 'PTOs Closed'
                              else 'cmb_metrics'))
     full_w  = get_full('car_wavg'    if closed_label == 'CARs Closed'
                        else ('pto_wavg'    if closed_label == 'PTOs Closed'
                              else 'cmb_wavg'))
-    # YE calc: only the 12 months of last_dec_year (not everything up to Dec)
-    all_months_full = D['month_labels']
-    ye_start_idx = next((i for i, m in enumerate(all_months_full)
-                         if m.endswith(str(last_dec_yr))), last_dec_idx_full - 11)
-    ye_slice     = full_m[ye_start_idx:last_dec_idx_full + 1]
-    ye_closed   = sum(r['closed']   for r in ye_slice)
-    ye_avg_list = [r['avg_days']   for r in ye_slice if r['closed'] > 0]
-    ye_avg_days = int(round(np.mean(ye_avg_list))) if ye_avg_list else 0
-    ye_avg_ov90 = int(round(np.mean([r['ov90'] for r in ye_slice])))
-    ye_last_ov  = full_m[last_dec_idx_full]['ov90']
-    ye_wavg     = full_w[last_dec_idx_full]
-
-    trend        = '▲ Worse'   if last_ov > prev_ov else ('▼ Improved' if last_ov < prev_ov else '→ Flat')
-    trend_color  = '#ef4444'   if '▲' in trend else ('#22c55e' if '▼' in trend else '#6b7c93')
-    ye_ov_color  = ov_color(ye_last_ov, t_hi, t_lo)[0]
-    ye_trend_lbl = f"Dec {last_dec_yr}: {ye_last_ov} open over 90d"
+    all_months_full  = D['month_labels']
+    ye_start_idx     = next((i for i, m in enumerate(all_months_full)
+                             if m.endswith(str(last_dec_yr))), last_dec_idx_full - 11)
+    ye_slice         = full_m[ye_start_idx:last_dec_idx_full + 1]
+    ye_closed        = sum(r['closed'] for r in ye_slice)
+    ye_avg_ov90      = int(round(np.mean([r['ov90'] for r in ye_slice])))
+    ye_last_ov       = full_m[last_dec_idx_full]['ov90']
+    ye_wavg          = full_w[last_dec_idx_full]
+    ye_ov_color      = ov_color(ye_last_ov, t_hi, t_lo)[0]
+    ye_trend_lbl     = f"Dec {last_dec_yr}: {ye_last_ov} open >90d"
 
     def card(border, val_color, val_size, val, lbl, sub, ye_color, ye_val):
         return f"""
@@ -406,29 +642,33 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
           <div class="metric-ye-val" style="color:{ye_color}">{ye_val}</div>
         </div>"""
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # ── 4-card layout (removed simple avg card) ──────────────────────
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(card(colors['primary'], colors['primary'], '1.8rem',
             f"{total_closed:,}", closed_label, f"{start_month} – {last_month}",
             colors['primary'], f"{ye_closed:,}"), unsafe_allow_html=True)
     with c2:
-        st.markdown(card('#64748b', '#0d1117', '1.8rem',
-            avg_days_val, "Avg Days to Close", "Simple monthly avg",
-            '#64748b', ye_avg_days), unsafe_allow_html=True)
-    with c3:
         bg, _ = ov_color(avg_ov90, t_hi, t_lo)
         st.markdown(card(bg, bg, '1.8rem',
-            avg_ov90, "Avg Open ≥90 Days", "Monthly average",
+            avg_ov90, "Avg Open ≥90 Days", "Monthly average over selected range",
             ye_ov_color, ye_avg_ov90), unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div class="metric-card" style="border-color:{trend_color}">
+          <div class="metric-val" style="color:{trend_color};font-size:1.5rem;
+               font-family:'DM Mono',monospace">{trend_display}</div>
+          <div class="metric-lbl">6-Month Trend (Open ≥90)</div>
+          <div class="metric-sub" style="font-family:'DM Sans',sans-serif">{trend_lbl}</div>
+          <div class="metric-divider"></div>
+          <div class="metric-ye-lbl">{ye_label}</div>
+          <div class="metric-ye-val" style="color:{ye_ov_color}">{ye_trend_lbl}</div>
+        </div>""", unsafe_allow_html=True)
     with c4:
-        st.markdown(card(trend_color, trend_color, '1.25rem',
-            trend, f"{last_month} vs {prev_month}", "Open ≥90 trend",
-            ye_ov_color, ye_trend_lbl), unsafe_allow_html=True)
-    with c5:
         st.markdown(f"""
         <div class="metric-card" style="border-color:{colors['wavg']}">
           <div class="metric-val" style="color:{colors['primary']};font-size:1.8rem">{cur_wavg}</div>
-          <div class="metric-lbl">Wtd Avg Days Closed</div>
+          <div class="metric-lbl">Wtd Avg Days to Close</div>
           <div class="metric-sub">{last_month} YTD running avg</div>
           <div class="metric-divider"></div>
           <div class="metric-ye-lbl">{ye_label}</div>
@@ -505,33 +745,41 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
                                xanchor='left', yanchor='bottom')
 
     fig.update_layout(
-        title=dict(text=title, font=dict(size=12, color='#0d1117'), x=0, y=0.97),
+        title=dict(text=title, font=dict(size=11, color='#0f1c2e', family='DM Sans'), x=0, y=0.97),
         barmode='group',
         plot_bgcolor='white', paper_bgcolor='white',
         legend=dict(
             orientation='h', yanchor='bottom', y=1.01,
             xanchor='right', x=1,
-            font=dict(size=9, color='#57606a'),
+            font=dict(size=9, color='#5a6577', family='DM Sans'),
             bgcolor='rgba(0,0,0,0)',
         ),
         margin=dict(l=0, r=0, t=44, b=0),
         hovermode='x unified',
+        hoverlabel=dict(
+            bgcolor='#0f1c2e',
+            bordercolor='#1a2d45',
+            font=dict(color='#c8d6e8', size=11, family='DM Mono'),
+        ),
         xaxis=dict(
-            tickfont=dict(size=9, color='#8b949e'),
+            tickfont=dict(size=9, color='#9aa3b0', family='DM Sans'),
             showgrid=False, zeroline=False,
-            linecolor='#e1e4e8',
+            linecolor='#e2e6ed',
+            tickangle=-30,
         ),
         yaxis=dict(
-            title=dict(text='Count', font=dict(size=10, color='#8b949e')),
-            gridcolor='#f6f8fa', zeroline=False,
-            tickfont=dict(size=9, color='#8b949e'),
+            title=dict(text='Count', font=dict(size=9, color='#9aa3b0', family='DM Sans')),
+            gridcolor='#f4f6f9', zeroline=False,
+            tickfont=dict(size=9, color='#9aa3b0', family='DM Mono'),
+            gridwidth=1,
         ),
         yaxis2=dict(
-            title=dict(text='Days', font=dict(size=10, color='#8b949e')),
-            gridcolor='#f6f8fa', zeroline=False,
-            tickfont=dict(size=9, color='#8b949e'),
+            title=dict(text='Days', font=dict(size=9, color='#9aa3b0', family='DM Sans')),
+            gridcolor='#f4f6f9', zeroline=False,
+            tickfont=dict(size=9, color='#9aa3b0', family='DM Mono'),
         ),
         height=310,
+        font=dict(family='DM Sans'),
     )
     return fig
 
@@ -567,7 +815,7 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
     end_label = slice_months[-1] if slice_months else all_months[-1]
     st.markdown(
         f'<div class="section-hdr">⚠ &nbsp;Top 20 Locations — Open ≥90 Days &nbsp;'
-        f'<span style="color:#0550ae;font-weight:700">({end_label})</span></div>',
+        f'<span style="color:#1e6fd9;font-weight:700">({end_label})</span></div>',
         unsafe_allow_html=True)
 
     headers = ['#', 'Location', val_label, 'Avg Ov90', 'Total Closed']
@@ -578,9 +826,9 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
     hcols = st.columns(widths)
     for h, c in zip(headers, hcols):
         c.markdown(
-            f"<div style='font-size:0.62rem;font-weight:600;color:#8b949e;"
-            f"text-transform:uppercase;letter-spacing:0.08em;padding-bottom:4px;"
-            f"border-bottom:2px solid #e1e4e8'>{h}</div>",
+            f"<div style='font-size:0.6rem;font-weight:700;color:#9aa3b0;"
+            f"text-transform:uppercase;letter-spacing:0.1em;padding-bottom:5px;"
+            f"border-bottom:2px solid #e2e6ed'>{h}</div>",
             unsafe_allow_html=True)
 
     for i, item in enumerate(top20_data, 1):
@@ -592,17 +840,17 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
             f"<div style='font-size:0.8rem;padding:5px 0;{row_bg}'>{rank}</div>",
             unsafe_allow_html=True)
         dcols[1].markdown(
-            f"<div style='font-size:0.8rem;padding:5px 0;font-weight:500;color:#0d1117;{row_bg}'>"
+            f"<div style='font-size:0.8rem;padding:5px 0;font-weight:500;color:#0f1c2e;{row_bg}'>"
             f"{item['loc']}</div>", unsafe_allow_html=True)
         dcols[2].markdown(
             f"<div style='padding:5px 0;{row_bg}'>"
             f"<span class='ov-pill' style='background:{bg};color:{fg}'>{item['last_ov']}</span>"
             f"</div>", unsafe_allow_html=True)
         dcols[3].markdown(
-            f"<div style='font-size:0.8rem;padding:5px 0;color:#57606a;{row_bg}'>"
+            f"<div style='font-size:0.8rem;padding:5px 0;color:#5a6577;{row_bg}'>"
             f"{item['avg_ov']}</div>", unsafe_allow_html=True)
         dcols[4].markdown(
-            f"<div style='font-size:0.8rem;padding:5px 0;color:#57606a;{row_bg}'>"
+            f"<div style='font-size:0.8rem;padding:5px 0;color:#5a6577;{row_bg}'>"
             f"{item['total_closed']:,}</div>", unsafe_allow_html=True)
         if secondary_cols:
             for j, (k, v) in enumerate(secondary_cols[i - 1].items(), 5):
@@ -619,23 +867,31 @@ title_loc = (selected_loc_label if selected_loc != 'ALL'
 # Context pill for region/location
 if selected_loc != 'ALL':
     rname_display = selected_region.strip('[]') if selected_region != 'ALL REGIONS' else ''
-    ctx_color = REGION_COLORS.get(rname_display, '#0550ae') if rname_display else '#0550ae'
+    ctx_color = REGION_COLORS.get(rname_display, '#8C1D18') if rname_display else '#8C1D18'
     loc_pill = (f'<span style="background:{ctx_color}22;color:{ctx_color};padding:2px 10px;'
-                f'border-radius:20px;font-size:0.72rem;font-weight:600">{selected_loc_label}</span>')
+                f'border-radius:4px;font-size:0.72rem;font-weight:600">{selected_loc_label}</span>')
 elif selected_region != 'ALL REGIONS':
     rname_display = selected_region.strip('[]')
-    ctx_color = REGION_COLORS.get(rname_display, '#0550ae')
+    ctx_color = REGION_COLORS.get(rname_display, '#8C1D18')
     nlocs = len(region_map.get(rname_display, []))
     loc_pill = (f'<span style="background:{ctx_color}22;color:{ctx_color};padding:2px 10px;'
-                f'border-radius:20px;font-size:0.72rem;font-weight:600">'
+                f'border-radius:4px;font-size:0.72rem;font-weight:600">'
                 f'{rname_display} &nbsp;·&nbsp; {nlocs} labs</span>')
 else:
     loc_pill = (f'<span class="pill">{len(all_locations)} locations</span> '
                 f'<span class="pill pill-green">{len(region_map)} regions</span>')
 
 date_filtered = start_idx != 0 or end_idx != NM - 1
-date_badge = (f'<span class="date-range-badge">📅 {start_month} – {end_month}</span>'
-              if date_filtered else '')
+# Data range = full span of uploaded file(s)
+data_range_label = f"{all_months[0]} – {all_months[-1]}"
+# Filtered badge — specific about what the filter is showing
+if date_filtered:
+    n_months = end_idx - start_idx + 1
+    date_badge = (f'<span class="date-range-badge">'
+                  f'📅 Filtered: {start_month} – {end_month} &nbsp;·&nbsp; {n_months} mo'
+                  f'</span>')
+else:
+    date_badge = ''
 
 st.markdown(f"""
 <div class="page-header">
@@ -645,7 +901,11 @@ st.markdown(f"""
       <div class="page-meta" style="margin-top:0.4rem">
         {loc_pill}
         <span class="dot">·</span>
-        <span>{all_months[0]} – {all_months[-1]}</span>
+        <span style="color:#6a8aaa;font-size:0.68rem;text-transform:uppercase;
+                     letter-spacing:0.06em;font-weight:600">Data:</span>
+        <span style="font-family:'DM Mono',monospace;color:#c8d6e8;font-size:0.72rem">
+          {data_range_label}
+        </span>
         <span class="dot">·</span>
         <span>Updated {D['loaded_at'].split()[0]}</span>
       </div>
