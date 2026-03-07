@@ -618,25 +618,10 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
         trend_sub    = f'Avg ≥90: {recent_avg:.0f} vs {prior_avg:.0f}'
         trend_display = f'{trend_icon} {trend_val}'
 
-    elif NM >= 2:
-        prev_ov    = ov_list[-2]
-        abs_delta  = last_ov - prev_ov
-        if prev_ov > 0:
-            pct_change = int(round(abs_delta / prev_ov * 100))
-        else:
-            pct_change = 0 if last_ov == 0 else 100
-        trend_icon  = '▲' if abs_delta > 0 else ('▼' if abs_delta < 0 else '→')
-        trend_color = '#c0392b' if abs_delta > 0 else ('#0d7a4e' if abs_delta < 0 else '#5a6577')
-        sign        = '+' if pct_change > 0 else ''
-        trend_val   = f'{sign}{pct_change}%'
-        trend_lbl   = f'Open ≥90: {last_month} vs prior month'
-        trend_sub   = f'Avg ≥90: {last_ov} vs {prev_ov}'
-        trend_display = f'{trend_icon} {trend_val}'
-
     else:
         trend_display = '—'
         trend_lbl     = 'Insufficient data'
-        trend_sub     = 'Need ≥2 months'
+        trend_sub     = 'Need ≥6 months of data'
         trend_color   = '#9aa3b0'
 
     # YE values
