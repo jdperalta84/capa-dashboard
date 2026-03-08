@@ -61,6 +61,15 @@ html, body, [class*="css"] {
 section[data-testid="stSidebar"] {
     background: var(--navy) !important;
     border-right: 1px solid var(--navy-soft) !important;
+    min-width: 260px !important;
+    transform: none !important;
+    visibility: visible !important;
+}
+/* Hide the sidebar collapse/expand toggle button */
+button[data-testid="collapsedControl"],
+button[kind="header"][aria-label="Close sidebar"],
+[data-testid="stSidebarCollapsedControl"] {
+    display: none !important;
 }
 section[data-testid="stSidebar"] * {
     color: #c8d6e8 !important;
