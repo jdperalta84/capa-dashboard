@@ -550,8 +550,21 @@ def _load_pivot(source, exclude_jn=False):
                    or _find_col(car_raw.columns, 'car #')
     loc_col      = _find_col(car_raw.columns, 'location', 'drop') \
                    or _find_col(car_raw.columns, 'location')
-    init_col     = car_raw.columns[9]   # col J (index 9) — per column mapping
-    close_col    = car_raw.columns[12]  # col M (index 12) — per column mapping
+    init_col     = car_raw.columns[9]   # col J (index 9) — consistent across all years
+    # Close date column varies by year:
+    #   2024: col K (index 10) 'Effectiveness Review & date deemed effective'  ~510 dates
+    #   2025: col M (index 12) 'Complete corrective actions (Approved Date)'   ~414 dates
+    #   2026: col M (index 12) 'Corrective Action Approved Date'
+    # Strategy: find all named candidates, pick whichever has the most valid dates.
+    _close_candidates = [c for c in [
+        _find_col(car_raw.columns, 'complete corrective', 'approved'),
+        _find_col(car_raw.columns, 'corrective action approved'),
+        _find_col(car_raw.columns, 'effectiveness review', 'date deemed'),
+        _find_col(car_raw.columns, 'effectiveness'),
+    ] if c is not None]
+    def _date_count(col):
+        return pd.to_datetime(car_raw[col], errors='coerce').notna().sum()
+    close_col = max(_close_candidates, key=_date_count) if _close_candidates else car_raw.columns[12]
     desc_col     = _find_col(car_raw.columns, 'description') \
                    or _find_col(car_raw.columns, 'brief')
     initials_col = _find_col(car_raw.columns, 'initials', exclude=['date', 'initialized'])
