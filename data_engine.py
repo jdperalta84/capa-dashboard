@@ -42,8 +42,8 @@ REGION_COLORS = {
     'Calibration':         '#C0392B',
 }
 
-# Regions excluded entirely from all metrics
-EXCLUDE_REGIONS = {'Corporate', 'Agri', 'Environmental', 'Unassigned', 'VOID'}
+# Regions excluded entirely from all metrics (checked case-insensitively)
+EXCLUDE_REGIONS = {'Corporate', 'Agri', 'AGRI', 'Environmental', 'Unassigned', 'VOID'}
 
 # Location name prefixes excluded regardless of their assigned region
 EXCLUDE_LOC_PREFIXES = ('agri', 'corporate', 'environmental', 'unassigned', 'void')
@@ -176,7 +176,7 @@ def _read_list_source(source):
         sub[loc_col]  = sub[loc_col].astype(str).str.strip()
         sub[area_col] = sub[area_col].astype(str).str.strip()
         sub = sub[sub[loc_col].ne('') & sub[loc_col].ne('nan')]
-        sub = sub[~sub[area_col].isin(EXCLUDE_REGIONS)]
+        sub = sub[~sub[area_col].str.upper().isin({r.upper() for r in EXCLUDE_REGIONS})]
         sub = sub[~sub[loc_col].str.lower().str.startswith(EXCLUDE_LOC_PREFIXES)]
         loc_region = dict(zip(sub[loc_col], sub[area_col]))
         loc_id = {}
@@ -204,7 +204,7 @@ def _build_region_map(locations, loc_region_lookup):
                 if k.lower() in loc.lower() or loc.lower() in k.lower():
                     region = v
                     break
-        if region is None or region in EXCLUDE_REGIONS:
+        if region is None or region.upper() in {r.upper() for r in EXCLUDE_REGIONS}:
             continue
         region_map.setdefault(region, []).append(loc)
     return region_map

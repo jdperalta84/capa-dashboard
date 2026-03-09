@@ -435,7 +435,7 @@ with st.sidebar:
     date_end_ph   = st.empty()
 
     st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
-    exclude_jn = st.toggle("Exclude JN PTOs", value=False)
+    exclude_jn = st.toggle("Exclude JN PTOs", value=True)
 
     st.markdown('<div class="sidebar-section">Export</div>', unsafe_allow_html=True)
     export_reg_btn = st.button("↓  Regional Summary (Excel)", use_container_width=True)
@@ -659,8 +659,8 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
           <div class="metric-ye-val" style="color:{ye_color}">{ye_val}</div>
         </div>"""
 
-    # ── 4-card layout ──────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
+    # ── 3-card layout ──────────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(card(
             "VOLUME",
@@ -678,16 +678,6 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
             ye_ov_color, ye_ov_snap,
             f"{ye_label} snapshot (Dec 31)"), unsafe_allow_html=True)
     with c3:
-        bg3, _ = ov_color(total_closed_ov90, t_hi, t_lo)
-        st.markdown(card(
-            "AGING — CLOSED LATE",
-            bg3, bg3, '1.8rem',
-            total_closed_ov90,
-            "Closed Records That Took >90 Days",
-            f"{start_month} – {last_month}",
-            ye_cov_color, ye_closed_ov90,
-            f"{ye_label} count"), unsafe_allow_html=True)
-    with c4:
         st.markdown(card(
             "CYCLE TIME",
             colors['wavg'], colors['primary'], '1.8rem',

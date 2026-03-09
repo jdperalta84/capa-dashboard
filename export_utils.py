@@ -282,6 +282,23 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 ws.row_dimensions[row_num].height = 16
                 row_num += 1
 
+        # ── NAM TOTAL row ──────────────────────────────────────────
+        nam_key = 'ALL'
+        nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
+        nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
+        nam_fill = hfill('1A1A2E')  # dark navy
+        ws.cell(row=row_num, column=1, value='NAM TOTAL').font = mfont(bold=True, size=10, color='FFFFFF')
+        nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, '']
+        for ci, v in enumerate(nam_vals, 2):
+            c = ws.cell(row=row_num, column=ci, value=v)
+            c.font = mfont(bold=True, size=10, color='FFFFFF')
+        for ci in range(1, 9):
+            ws.cell(row=row_num, column=ci).fill      = nam_fill
+            ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
+            ws.cell(row=row_num, column=ci).border    = mkborder(thick_top=True, ytd_left=(ci == 5))
+        ws.row_dimensions[row_num].height = 20
+        row_num += 1
+
         # Column widths
         ws.column_dimensions['A'].width = 36
         for col in ['B', 'C', 'D']:
