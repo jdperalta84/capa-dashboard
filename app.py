@@ -821,7 +821,7 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
 
     # Column label: total across range
     ov_col_lbl = f'{val_label} Total'
-    headers = ['#', 'Location', ov_col_lbl, 'Monthly Avg', 'Total Closed']
+    headers = ['#', 'Location', ov_col_lbl, 'Avg (Period)', 'Total Closed']
     if secondary_cols:
         headers += list(secondary_cols[0].keys())
     widths = [0.3, 2.8, 1.1, 1, 1] + ([1] * len(secondary_cols[0]) if secondary_cols else [])
@@ -976,7 +976,7 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
 
     def loc_total_ov(loc):
         s = loc_slice(loc)
-        return sum(r['ov90'] for r in s) if s else 0
+        return s[-1]['ov90'] if s else 0  # snapshot at last month of slice
 
     def loc_avg_ov(loc):
         s = loc_slice(loc)
@@ -1011,7 +1011,7 @@ with tab_combined:
         def get_slice_ov(loc_metrics, loc):
             lm = loc_metrics.get(loc, [])
             s = lm[start_idx:end_idx + 1] if lm else []
-            return sum(r['ov90'] for r in s) if s else 0
+            return s[-1]['ov90'] if s else 0  # snapshot at last month of slice
         return [{'CAR >90': get_slice_ov(car_lm, i['loc']),
                  'PTO >90': get_slice_ov(pto_lm, i['loc'])} for i in top20]
     render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
