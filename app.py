@@ -429,17 +429,21 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">Data Source — International</div>', unsafe_allow_html=True)
     intl_files = st.file_uploader("Upload international xls files", type=["xls"],
                                   label_visibility="collapsed",
-                                  accept_multiple_files=True,
-                                  key="intl_uploader")
+                                  accept_multiple_files=True)
     load_btn = st.button("↳  Reload Data", use_container_width=True)
 
+    # Global Scope — always rendered for stable widget state.
     has_intl_loaded = st.session_state.get("data", {}).get("has_intl", False)
-    if has_intl_loaded:
-        st.markdown('<div class="sidebar-section">Global Scope</div>', unsafe_allow_html=True)
+    has_intl_files  = bool(intl_files)
+    show_intl_scope = has_intl_loaded or has_intl_files
+    st.markdown('<div class="sidebar-section">Global Scope</div>', unsafe_allow_html=True)
+    if show_intl_scope:
         global_scope = st.radio("Global scope",
                                 ["All Global", "NAM", "EMEA", "APAC"],
-                                horizontal=True, label_visibility="collapsed")
+                                horizontal=True, label_visibility="collapsed",
+                                key="global_scope_radio")
     else:
+        st.caption("Load international files to enable")
         global_scope = "NAM"
 
     st.markdown('<div class="sidebar-section">Region</div>', unsafe_allow_html=True)
@@ -514,6 +518,10 @@ elif "data" not in st.session_state:
     st.stop()
 
 D = st.session_state.data
+
+# Sync global_scope: if data has intl but radio not yet shown, default to All Global
+if D.get('has_intl') and not (has_intl_files or has_intl_loaded):
+    global_scope = "All Global"
 
 with loaded_at_ph:
     fname = st.session_state.get("filename", "")
@@ -994,8 +1002,8 @@ st.markdown(f"""
 # ══════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════
-is_intl_scope   = has_intl and global_scope in ('EMEA', 'APAC')
-is_global_scope = has_intl and global_scope == 'All Global'
+is_intl_scope   = (has_intl or has_intl_files) and global_scope in ('EMEA', 'APAC')
+is_global_scope = (has_intl or has_intl_files) and global_scope == 'All Global'
 
 if is_intl_scope or is_global_scope:
     _tabs        = st.tabs(["📘  CARs"])
