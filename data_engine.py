@@ -792,3 +792,430 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     result['exclude_jn']  = exclude_jn
     result['loc_id_map']  = combined_loc_id
     return result
+
+
+# ══════════════════════════════════════════════════════════════════
+# INTERNATIONAL (INTL) FILE LOADER — OLE2/BIFF8 .xls parser
+# ══════════════════════════════════════════════════════════════════
+import struct
+
+# Geographic mapping: lab name (from filename) → global region
+INTL_GLOBAL_REGION = {
+    'Australia': 'APAC', 'Singapore': 'APAC',
+    'Amsterdam': 'EMEA', 'Belgium': 'EMEA', 'Italy': 'EMEA',
+    'Morocco':   'EMEA', 'Portugal': 'EMEA', 'Rotterdam': 'EMEA',
+    'Spain':     'EMEA', 'Sweden':   'EMEA', 'UAE': 'EMEA',
+}
+GLOBAL_REGION_ORDER  = ['NAM', 'EMEA', 'APAC']
+GLOBAL_REGION_COLORS = {'NAM': '#0f1c2e', 'EMEA': '#1a3a5c', 'APAC': '#8C1D18'}
+
+# Closed status values across all lab languages
+_CLOSED_STATUSES = {'afgesloten', 'closed', 'cerrado', 'fermé', 'chiuso',
+                    'abgeschlossen', 'fechado', 'stängd', 'مغلق', 'ferme'}
+
+
+def _lab_name_from_source(source) -> str:
+    """Extract lab name from filename: export_CAPA_Italy.xls -> Italy"""
+    try:
+        name = getattr(source, 'name', '') or ''
+        stem = Path(name).stem
+        parts = stem.split('_')
+        return parts[-1] if parts else stem
+    except Exception:
+        return 'Unknown'
+
+
+def _parse_ole2_workbook(data: bytes) -> bytes:
+    """Extract Workbook/Book stream from OLE2 compound file."""
+    sector_size = 1 << struct.unpack_from('<H', data, 0x1e)[0]
+    num_fat     = struct.unpack_from('<I', data, 0x2c)[0]
+    dir_sector  = struct.unpack_from('<I', data, 0x30)[0]
+
+    def sector_offset(s):
+        return 512 + s * sector_size
+
+    def read_chain(start):
+        fat_secs = []
+        for i in range(min(num_fat, 109)):
+            s = struct.unpack_from('<I', data, 0x4c + i * 4)[0]
+            if s < 0xFFFFFFFD:
+                fat_secs.append(s)
+        fat = bytearray()
+        for s in fat_secs:
+            off = sector_offset(s)
+            fat.extend(data[off:off + sector_size])
+        result  = bytearray()
+        s       = start
+        visited = set()
+        while s < 0xFFFFFFFD and s not in visited:
+            visited.add(s)
+            off = sector_offset(s)
+            result.extend(data[off:off + sector_size])
+            s = struct.unpack_from('<I', fat, s * 4)[0] if s * 4 + 4 <= len(fat) else 0xFFFFFFFE
+        return bytes(result)
+
+    dir_data = read_chain(dir_sector)
+    for i in range(len(dir_data) // 128):
+        entry    = dir_data[i * 128:(i + 1) * 128]
+        name_len = struct.unpack_from('<H', entry, 0x40)[0]
+        if 0 < name_len <= 64:
+            name = entry[:name_len - 2].decode('utf-16-le', errors='ignore')
+            if name.lower() in ('workbook', 'book') and entry[0x42] in (1, 2):
+                start_sect = struct.unpack_from('<I', entry, 0x74)[0]
+                size       = struct.unpack_from('<I', entry, 0x78)[0]
+                return read_chain(start_sect)[:size]
+    return b''
+
+
+def _extract_biff8_sst(wb: bytes) -> list:
+    """Parse Shared String Table from BIFF8 workbook stream."""
+    strings = []
+    i = 0
+    while i < len(wb) - 4:
+        rt = struct.unpack_from('<H', wb, i)[0]
+        rl = struct.unpack_from('<H', wb, i + 2)[0]
+        pl = wb[i + 4:i + 4 + rl]
+        if rt == 0x00FC and len(pl) >= 8:
+            n   = struct.unpack_from('<I', pl, 4)[0]
+            pos = 8
+            for _ in range(n):
+                if pos >= len(pl):
+                    break
+                cc    = struct.unpack_from('<H', pl, pos)[0]
+                flags = pl[pos + 2] if pos + 2 < len(pl) else 0
+                pos  += 3
+                if not (flags & 0x01):
+                    s    = pl[pos:pos + cc].decode('latin-1', errors='ignore')
+                    pos += cc
+                else:
+                    s    = pl[pos:pos + cc * 2].decode('utf-16-le', errors='ignore')
+                    pos += cc * 2
+                strings.append(s)
+        i += 4 + rl
+    return strings
+
+
+def _extract_biff8_cells(wb: bytes, sst: list) -> dict:
+    """Extract all cell values keyed by (sheet_index, row, col)."""
+    cells     = {}
+    i         = 0
+    cur_sheet = 0
+    while i < len(wb) - 4:
+        rt = struct.unpack_from('<H', wb, i)[0]
+        rl = struct.unpack_from('<H', wb, i + 2)[0]
+        pl = wb[i + 4:i + 4 + rl]
+        if rt == 0x0809:
+            cur_sheet += 1
+        elif rt == 0x00FD and len(pl) >= 10:  # LABELSST
+            row = struct.unpack_from('<H', pl, 0)[0]
+            col = struct.unpack_from('<H', pl, 2)[0]
+            idx = struct.unpack_from('<I', pl, 6)[0]
+            if idx < len(sst):
+                cells[(cur_sheet, row, col)] = sst[idx]
+        elif rt == 0x0203 and len(pl) >= 14:  # NUMBER
+            row = struct.unpack_from('<H', pl, 0)[0]
+            col = struct.unpack_from('<H', pl, 2)[0]
+            cells[(cur_sheet, row, col)] = struct.unpack_from('<d', pl, 6)[0]
+        i += 4 + rl
+    return cells
+
+
+def _parse_intl_date(val) -> 'pd.Timestamp':
+    """Parse DD/MM/YYYY string → Timestamp. Returns NaT on failure."""
+    if not val or not isinstance(val, str):
+        return pd.NaT
+    try:
+        return pd.to_datetime(val.strip(), dayfirst=True, errors='coerce')
+    except Exception:
+        return pd.NaT
+
+
+def load_intl_file(source):
+    """
+    Parse one international CAPA .xls file.
+    Returns (closed_df, open_df) each with columns:
+      loc, global_region, init_date, close_date, days2close
+    Deduplicates by CAPA ID: earliest init_date, latest close_date.
+    """
+    lab_name      = _lab_name_from_source(source)
+    global_region = INTL_GLOBAL_REGION.get(lab_name, 'EMEA')
+
+    raw = source.read() if hasattr(source, 'read') else open(source, 'rb').read()
+    wb  = _parse_ole2_workbook(raw)
+    empty = pd.DataFrame(columns=['loc', 'global_region', 'init_date', 'close_date', 'days2close'])
+    if not wb:
+        return empty, empty
+
+    sst   = _extract_biff8_sst(wb)
+    cells = _extract_biff8_cells(wb, sst)
+
+    # Find data sheet: has 'Number', 'Date of notification', 'Date closed' in row 0
+    main_cells = {}
+    col_map    = {}
+    for sheet in sorted(set(s for s, r, c in cells)):
+        sc   = {(r, c): v for (s, r, c), v in cells.items() if s == sheet}
+        row0 = {c: sc.get((0, c), '') for c in range(20)}
+        vals = list(row0.values())
+        if 'Number' in vals and 'Date of notification' in vals and 'Date closed' in vals:
+            main_cells = sc
+            col_map    = {str(v).strip(): c for c, v in row0.items() if str(v).strip()}
+            break
+
+    if not main_cells:
+        return empty, empty
+
+    id_col     = col_map.get('Number', 0)
+    init_col   = col_map.get('Date of notification', 1)
+    close_col  = col_map.get('Date closed', 9)
+    status_col = col_map.get('Status', 8)
+    max_row    = max((r for r, c in main_cells), default=0)
+
+    raw_rows = []
+    for row in range(1, max_row + 1):
+        capa_id = str(main_cells.get((row, id_col), '')).strip()
+        if not capa_id or capa_id in ('nan', ''):
+            continue
+        init_dt  = _parse_intl_date(str(main_cells.get((row, init_col), '')))
+        close_dt = _parse_intl_date(str(main_cells.get((row, close_col), '')))
+        status   = str(main_cells.get((row, status_col), '')).strip()
+        raw_rows.append({'capa_id': capa_id, 'init_dt': init_dt,
+                         'close_dt': close_dt, 'status': status})
+
+    if not raw_rows:
+        return empty, empty
+
+    df = pd.DataFrame(raw_rows)
+
+    # Deduplicate: earliest init, latest close per CAPA ID
+    df_dedup = df.groupby('capa_id', sort=False).agg(
+        init_dt  = ('init_dt',  'min'),
+        close_dt = ('close_dt', 'max'),
+        status   = ('status',   'last'),
+    ).reset_index()
+
+    closed_mask = df_dedup['status'].str.lower().isin(_CLOSED_STATUSES)
+
+    # Closed records
+    df_c = df_dedup[closed_mask & df_dedup['close_dt'].notna() & df_dedup['init_dt'].notna()].copy()
+    df_c['loc']           = lab_name
+    df_c['global_region'] = global_region
+    df_c['init_date']     = df_c['init_dt']
+    df_c['close_date']    = df_c['close_dt']
+    df_c['days2close']    = (df_c['close_date'] - df_c['init_date']).dt.days.clip(lower=0)
+    closed_out = df_c[['loc', 'global_region', 'init_date', 'close_date', 'days2close']].copy()
+
+    # Open records
+    open_mask = ~closed_mask | df_dedup['close_dt'].isna()
+    df_o = df_dedup[open_mask & df_dedup['init_dt'].notna()].copy()
+    df_o['loc']           = lab_name
+    df_o['global_region'] = global_region
+    df_o['init_date']     = df_o['init_dt']
+    df_o['close_date']    = pd.NaT
+    df_o['days2close']    = np.nan
+    open_out = df_o[['loc', 'global_region', 'init_date', 'close_date', 'days2close']].copy()
+
+    return closed_out, open_out
+
+
+def load_and_compute_global(nam_sources, intl_sources, exclude_jn=True):
+    """
+    Compute unified global metrics combining NAM + international files.
+    Returns standard D dict plus:
+      has_intl, intl_locations, intl_region_map, intl_lab_region, global_scope
+    """
+    from calendar import monthrange as _mr
+
+    D_nam = load_and_compute_multi(nam_sources, exclude_jn=exclude_jn)
+
+    if not intl_sources:
+        D_nam['has_intl']        = False
+        D_nam['intl_locations']  = []
+        D_nam['intl_region_map'] = {}
+        D_nam['intl_lab_region'] = {}
+        D_nam['global_scope']    = 'NAM'
+        return D_nam
+
+    # Load all international files
+    intl_closed_parts = []
+    intl_open_parts   = []
+    intl_lab_region   = {}
+
+    for src in intl_sources:
+        try:
+            src.seek(0)
+            closed_df, open_df = load_intl_file(src)
+            if len(closed_df):
+                intl_closed_parts.append(closed_df)
+                intl_lab_region[closed_df['loc'].iloc[0]] = closed_df['global_region'].iloc[0]
+            if len(open_df):
+                intl_open_parts.append(open_df)
+                lab = open_df['loc'].iloc[0]
+                if lab not in intl_lab_region:
+                    intl_lab_region[lab] = open_df['global_region'].iloc[0]
+        except Exception:
+            pass
+
+    _empty = pd.DataFrame(columns=['loc', 'global_region', 'init_date', 'close_date', 'days2close'])
+    intl_closed = pd.concat(intl_closed_parts, ignore_index=True) if intl_closed_parts else _empty.copy()
+    intl_open   = pd.concat(intl_open_parts,   ignore_index=True) if intl_open_parts   else _empty.copy()
+
+    # Build intl_region_map
+    intl_region_map = {}
+    for lab, grgn in intl_lab_region.items():
+        intl_region_map.setdefault(grgn, [])
+        if lab not in intl_region_map[grgn]:
+            intl_region_map[grgn].append(lab)
+    for grgn in intl_region_map:
+        intl_region_map[grgn] = sorted(intl_region_map[grgn])
+
+    # Unified month timeline
+    D_nam_months = D_nam['month_labels']
+    all_dates = []
+    for df in [intl_closed, intl_open]:
+        for col in ['init_date', 'close_date']:
+            if col in df.columns:
+                all_dates.append(df[col].dropna())
+
+    if all_dates:
+        all_ts       = pd.concat(all_dates)
+        intl_min     = all_ts.min()
+        nam_start    = pd.Period(D_nam_months[0], 'M')
+        global_start = min(intl_min.to_period('M'), nam_start)
+    else:
+        global_start = pd.Period(D_nam_months[0], 'M')
+
+    global_end       = pd.Period(D_nam_months[-1], 'M')
+    months_ext       = pd.period_range(global_start, global_end, freq='M')
+    month_labels_ext = [m.strftime('%b %Y') for m in months_ext]
+    NM               = len(months_ext)
+    nam_offset       = NM - len(D_nam_months)
+
+    # Pad NAM metric lists to match extended timeline
+    def pad_rows(rows, n):
+        if not rows or n <= 0:
+            return list(rows)
+        zero = {k: 0 for k in rows[0]}
+        return [dict(zero) for _ in range(n)] + list(rows)
+
+    def pad_wavg(vals, n):
+        return [0] * n + list(vals)
+
+    if nam_offset > 0:
+        for key in ('car_metrics', 'pto_metrics', 'cmb_metrics'):
+            for loc_key in D_nam[key]:
+                D_nam[key][loc_key] = pad_rows(D_nam[key][loc_key], nam_offset)
+        for key in ('car_wavg', 'pto_wavg', 'cmb_wavg'):
+            for loc_key in D_nam[key]:
+                D_nam[key][loc_key] = pad_wavg(D_nam[key][loc_key], nam_offset)
+        if D_nam['last_dec_idx'] is not None:
+            D_nam['last_dec_idx'] += nam_offset
+        if D_nam['prev_dec_idx'] is not None:
+            D_nam['prev_dec_idx'] += nam_offset
+        D_nam['year_end_indices'] = {yr: idx + nam_offset
+                                     for yr, idx in D_nam.get('year_end_indices', {}).items()}
+
+    D_nam['month_labels'] = month_labels_ext
+
+    # Build intl "all records" df (closed + open) for ov90 snapshots
+    intl_all_parts = []
+    if len(intl_closed):
+        intl_all_parts.append(intl_closed[['loc', 'global_region', 'init_date', 'close_date']])
+    if len(intl_open):
+        o = intl_open[['loc', 'global_region', 'init_date']].copy()
+        o['close_date'] = pd.NaT
+        intl_all_parts.append(o)
+    intl_all = pd.concat(intl_all_parts, ignore_index=True) if intl_all_parts else \
+        pd.DataFrame(columns=['loc', 'global_region', 'init_date', 'close_date'])
+
+    def _me(m):
+        from calendar import monthrange as _mr2
+        last = _mr2(m.year, m.month)[1]
+        return pd.Timestamp(m.year, m.month, last, 23, 59, 59)
+
+    def intl_ov90(df_all, lab_keys, m):
+        if df_all is None or len(df_all) == 0:
+            return 0
+        df = df_all[df_all['loc'].isin(lab_keys)] if lab_keys is not None else df_all
+        me     = _me(m)
+        cutoff = me - pd.Timedelta(days=91)
+        mask   = (df['init_date'] <= cutoff) & (df['close_date'].isna() | (df['close_date'] > me))
+        return int(mask.sum())
+
+    def intl_calc(closed_df, all_df, lab_keys):
+        c    = closed_df[closed_df['loc'].isin(lab_keys)] if lab_keys and len(closed_df) else \
+               (closed_df if lab_keys is None else closed_df.iloc[0:0])
+        all_ = all_df[all_df['loc'].isin(lab_keys)]      if lab_keys and len(all_df) else \
+               (all_df if lab_keys is None else all_df.iloc[0:0])
+        c = c.copy()
+        if len(c):
+            c['close_month'] = c['close_date'].dt.to_period('M')
+        rows = []
+        for m in months_ext:
+            mc  = c[c['close_month'] == m] if len(c) else c
+            cnt = len(mc)
+            avg = int(round(mc['days2close'].mean())) if cnt > 0 else 0
+            ov  = intl_ov90(all_, lab_keys, m)
+            rows.append({'closed': cnt, 'avg_days': avg,
+                         'ov90': ov,
+                         'closed_ov90': int((mc['days2close'] > 90).sum()) if cnt > 0 else 0,
+                         'total_days': cnt * avg})
+        return rows
+
+    def intl_running_wavg(rows):
+        result = []; cum_cls = 0; cum_days = 0; cur_year = months_ext[0].year
+        for i, m in enumerate(months_ext):
+            if m.year != cur_year:
+                cum_cls = 0; cum_days = 0; cur_year = m.year
+            cum_cls  += rows[i]['closed']
+            cum_days += rows[i]['total_days']
+            result.append(int(round(cum_days / cum_cls)) if cum_cls > 0 else 0)
+        return result
+
+    intl_labs = sorted(intl_lab_region.keys())
+
+    # Per-lab metrics
+    for lab in intl_labs:
+        rows = intl_calc(intl_closed, intl_all, [lab])
+        D_nam['car_metrics'][lab] = rows
+        D_nam['car_wavg'][lab]    = intl_running_wavg(rows)
+
+    # Per global-region metrics
+    for grgn, labs in intl_region_map.items():
+        rows = intl_calc(intl_closed, intl_all, labs)
+        D_nam['car_metrics'][f'GLOBAL:{grgn}'] = rows
+        D_nam['car_wavg'][f'GLOBAL:{grgn}']    = intl_running_wavg(rows)
+
+    # All intl combined
+    rows_intl_all = intl_calc(intl_closed, intl_all, None)
+    D_nam['car_metrics']['INTL:ALL'] = rows_intl_all
+    D_nam['car_wavg']['INTL:ALL']    = intl_running_wavg(rows_intl_all)
+
+    # GLOBAL:NAM = NAM combined (CARs + PTOs)
+    D_nam['car_metrics']['GLOBAL:NAM'] = D_nam['cmb_metrics']['ALL']
+    D_nam['car_wavg']['GLOBAL:NAM']    = D_nam['cmb_wavg']['ALL']
+
+    # GLOBAL:ALL = NAM combined + all intl per month
+    nam_cmb = D_nam['cmb_metrics']['ALL']
+    global_all_rows = []
+    for i in range(NM):
+        n  = nam_cmb[i]
+        il = rows_intl_all[i]
+        tot = n['closed'] + il['closed']
+        avg = int(round((n['total_days'] + il['total_days']) / tot)) if tot > 0 else 0
+        global_all_rows.append({
+            'closed':      tot,
+            'avg_days':    avg,
+            'ov90':        n['ov90'] + il['ov90'],
+            'closed_ov90': n.get('closed_ov90', 0) + il['closed_ov90'],
+            'total_days':  n['total_days'] + il['total_days'],
+        })
+    D_nam['car_metrics']['GLOBAL:ALL'] = global_all_rows
+    D_nam['car_wavg']['GLOBAL:ALL']    = intl_running_wavg(global_all_rows)
+
+    D_nam['has_intl']        = True
+    D_nam['intl_locations']  = intl_labs
+    D_nam['intl_region_map'] = intl_region_map
+    D_nam['intl_lab_region'] = intl_lab_region
+    D_nam['global_scope']    = 'ALL'
+
+    return D_nam
