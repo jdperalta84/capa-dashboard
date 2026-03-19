@@ -6,7 +6,10 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import io
 
-from data_engine import load_and_compute, load_and_compute_multi, REGION_ORDER, REGION_COLORS
+from data_engine import (load_and_compute, load_and_compute_multi,
+                         load_and_compute_global,
+                         REGION_ORDER, REGION_COLORS,
+                         INTL_GLOBAL_REGION, GLOBAL_REGION_ORDER, GLOBAL_REGION_COLORS)
 from export_utils import export_regional_summary
 
 st.set_page_config(page_title="CAPA · PTO Dashboard", page_icon="📋",
@@ -418,11 +421,30 @@ with st.sidebar:
                 margin-bottom:0.5rem"></div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="sidebar-section">Data Source</div>', unsafe_allow_html=True)
-    uploaded_files = st.file_uploader("Upload Excel file", type=["xlsx"],
+    st.markdown('<div class="sidebar-section">Data Source — NAM</div>', unsafe_allow_html=True)
+    uploaded_files = st.file_uploader("Upload NAM xlsx files", type=["xlsx"],
                                      label_visibility="collapsed",
                                      accept_multiple_files=True)
-    load_btn = st.button("⟳  Reload Data", use_container_width=True)
+
+    st.markdown('<div class="sidebar-section">Data Source — International</div>', unsafe_allow_html=True)
+    intl_files = st.file_uploader("Upload international xls files", type=["xls"],
+                                  label_visibility="collapsed",
+                                  accept_multiple_files=True)
+    load_btn = st.button("↳  Reload Data", use_container_width=True)
+
+    # Global Scope — always rendered for stable widget state.
+    has_intl_loaded = st.session_state.get("data", {}).get("has_intl", False)
+    has_intl_files  = bool(intl_files)
+    show_intl_scope = has_intl_loaded or has_intl_files
+    st.markdown('<div class="sidebar-section">Global Scope</div>', unsafe_allow_html=True)
+    if show_intl_scope:
+        global_scope = st.radio("Global scope",
+                                ["All Global", "NAM", "EMEA", "APAC"],
+                                horizontal=True, label_visibility="collapsed",
+                                key="global_scope_radio")
+    else:
+        st.caption("Load international files to enable")
+        global_scope = "NAM"
 
     st.markdown('<div class="sidebar-section">Region</div>', unsafe_allow_html=True)
     region_placeholder = st.empty()
@@ -452,13 +474,21 @@ with st.sidebar:
 # LOAD DATA
 # ══════════════════════════════════════════════════════════════════
 @st.cache_data(show_spinner="Computing metrics…")
-def get_data(all_file_bytes, exclude_jn=False):
-    return load_and_compute_multi(
-        [io.BytesIO(b) for b in all_file_bytes], exclude_jn=exclude_jn)
+def get_data(all_file_bytes, intl_file_bytes=(), exclude_jn=False):
+    nam_sources = [io.BytesIO(b) for b in all_file_bytes]
+    if intl_file_bytes:
+        intl_sources = []
+        for name, data in intl_file_bytes:
+            buf = io.BytesIO(data)
+            buf.name = name
+            intl_sources.append(buf)
+        return load_and_compute_global(nam_sources, intl_sources, exclude_jn=exclude_jn)
+    return load_and_compute_multi(nam_sources, exclude_jn=exclude_jn)
 
 if uploaded_files:
     all_bytes  = tuple(f.read() for f in uploaded_files)
-    file_hash  = hash(all_bytes)
+    intl_bytes = tuple((f.name, f.read()) for f in (intl_files or []))
+    file_hash  = hash(all_bytes + intl_bytes)
     jn_changed = st.session_state.get("exclude_jn") != exclude_jn
     if ("data" not in st.session_state
             or st.session_state.get("file_hash") != file_hash
@@ -466,7 +496,7 @@ if uploaded_files:
         st.session_state.exclude_jn = exclude_jn
         try:
             get_data.clear()
-            st.session_state.data = get_data(all_bytes, exclude_jn)
+            st.session_state.data = get_data(all_bytes, intl_bytes, exclude_jn)
             st.session_state.file_hash = file_hash
             st.session_state.filename = uploaded_files[0].name
         except Exception as e:
@@ -489,6 +519,10 @@ elif "data" not in st.session_state:
 
 D = st.session_state.data
 
+# Sync global_scope: if data has intl but radio not yet shown, default to All Global
+if D.get('has_intl') and not (has_intl_files or has_intl_loaded):
+    global_scope = "All Global"
+
 with loaded_at_ph:
     fname = st.session_state.get("filename", "")
     st.markdown(f"""
@@ -505,54 +539,93 @@ with loaded_at_ph:
 # ══════════════════════════════════════════════════════════════════
 # FILTERS
 # ══════════════════════════════════════════════════════════════════
-region_map     = D['region_map']
-all_locations  = D['all_locations']
-all_months     = D['month_labels']
-NM             = len(all_months)
-loc_id_map     = D.get('loc_id_map', {})
+region_map      = D['region_map']
+all_locations   = D['all_locations']
+all_months      = D['month_labels']
+NM              = len(all_months)
+loc_id_map      = D.get('loc_id_map', {})
+has_intl        = D.get('has_intl', False)
+intl_region_map = D.get('intl_region_map', {})
+intl_locations  = D.get('intl_locations', [])
 
 def loc_label(name):
-    """Return 'Location Name - ID' if ID available, else just name."""
     lid = loc_id_map.get(name, '')
     return f'{name} - {lid}' if lid else name
 
 def loc_from_label(label):
-    """Reverse loc_label — extract the location name from a display label."""
     if not label or label == 'ALL':
         return 'ALL'
-    # Strip trailing ' - ID' suffix if present
-    for name in all_locations:
+    for name in all_locations + intl_locations:
         if label == loc_label(name) or label == name:
             return name
-    return label  # fallback
+    return label
 
-region_options = ['ALL REGIONS'] + [f'[{r}]' for r in REGION_ORDER if r in region_map]
+# Scope-aware region/location filters
+if global_scope in ('EMEA', 'APAC') and has_intl:
+    scope_labs = intl_region_map.get(global_scope, [])
+    with region_placeholder:
+        st.selectbox("Region", ['ALL REGIONS'], key="region_sel",
+                     label_visibility="collapsed")
+    selected_region = 'ALL REGIONS'
+    region_key      = f'GLOBAL:{global_scope}'
+    with location_placeholder:
+        selected_loc_label = st.selectbox("Location", ['ALL'] + scope_labs,
+                                          key="loc_sel", label_visibility="collapsed")
+    selected_loc = selected_loc_label if selected_loc_label != 'ALL' else 'ALL'
+    data_key = region_key if selected_loc == 'ALL' else selected_loc
 
-with region_placeholder:
-    selected_region = st.selectbox("Region", region_options, key="region_sel",
-                                   label_visibility="collapsed")
+elif global_scope == 'All Global' and has_intl:
+    region_options = (['ALL REGIONS']
+                      + [f'[{r}]' for r in REGION_ORDER if r in region_map]
+                      + ['[EMEA]', '[APAC]'])
+    with region_placeholder:
+        selected_region = st.selectbox("Region", region_options, key="region_sel",
+                                       label_visibility="collapsed")
+    if selected_region == 'ALL REGIONS':
+        region_key = 'GLOBAL:ALL'
+        filtered_locs = all_locations + intl_locations
+    elif selected_region in ('[EMEA]', '[APAC]'):
+        grgn = selected_region.strip('[]')
+        region_key    = f'GLOBAL:{grgn}'
+        filtered_locs = intl_region_map.get(grgn, [])
+    else:
+        rname         = selected_region.strip('[]')
+        region_key    = f'REGION:{rname}'
+        filtered_locs = sorted(region_map.get(rname, []))
+    filtered_loc_labels = [loc_label(l) if l in all_locations else l for l in filtered_locs]
+    with location_placeholder:
+        selected_loc_label = st.selectbox("Location", ['ALL'] + filtered_loc_labels,
+                                          key="loc_sel", label_visibility="collapsed")
+    selected_loc = loc_from_label(selected_loc_label)
+    data_key = region_key if selected_loc == 'ALL' else selected_loc
 
-if selected_region == 'ALL REGIONS':
-    filtered_locs = all_locations
-    region_key    = 'ALL'
-else:
-    rname         = selected_region.strip('[]')
-    filtered_locs = sorted(region_map.get(rname, []))
-    region_key    = f'REGION:{rname}'
-
-# Display labels include "- ID" suffix; data_key uses the plain name
-filtered_loc_labels = [loc_label(l) for l in filtered_locs]
-with location_placeholder:
-    selected_loc_label = st.selectbox("Location", ['ALL'] + filtered_loc_labels,
-                                      key="loc_sel", label_visibility="collapsed")
-selected_loc = loc_from_label(selected_loc_label)
-
-data_key = region_key if selected_loc == 'ALL' else selected_loc
+else:  # NAM only
+    region_options = ['ALL REGIONS'] + [f'[{r}]' for r in REGION_ORDER if r in region_map]
+    with region_placeholder:
+        selected_region = st.selectbox("Region", region_options, key="region_sel",
+                                       label_visibility="collapsed")
+    if selected_region == 'ALL REGIONS':
+        filtered_locs = all_locations
+        region_key    = 'ALL'
+    else:
+        rname         = selected_region.strip('[]')
+        filtered_locs = sorted(region_map.get(rname, []))
+        region_key    = f'REGION:{rname}'
+    filtered_loc_labels = [loc_label(l) for l in filtered_locs]
+    with location_placeholder:
+        selected_loc_label = st.selectbox("Location", ['ALL'] + filtered_loc_labels,
+                                          key="loc_sel", label_visibility="collapsed")
+    selected_loc = loc_from_label(selected_loc_label)
+    data_key = region_key if selected_loc == 'ALL' else selected_loc
 
 # ── Date range ────────────────────────────────────────────────────
+# Default start to Jan 2024 — intl files extend timeline back to 2018
+_default_start = 'Jan 2024'
+_default_start_idx = all_months.index(_default_start) if _default_start in all_months else 0
+
 with date_start_ph:
     start_month = st.selectbox("From", all_months,
-                               index=0, key="date_start",
+                               index=_default_start_idx, key="date_start",
                                label_visibility="collapsed")
 with date_end_ph:
     end_month = st.selectbox("To", all_months,
@@ -583,8 +656,14 @@ THEME = {
     'combined': {'primary': '#8C1D18', 'bar2': '#64748b', 'line': '#5a6577', 'wavg': '#9aa3b0'},
 }
 
-def get_full(key):  return D[key].get(data_key, D[key]['ALL'])
-def get_sliced(key):return slice_data(D[key].get(data_key, D[key]['ALL']))
+def get_full(key):
+    d = D[key]
+    if data_key in d:
+        return d[data_key]
+    return d.get('ALL', [])
+
+def get_sliced(key):
+    return slice_data(get_full(key))
 
 # ══════════════════════════════════════════════════════════════════
 # SCORECARD  (always full data range — no slicing)
@@ -857,8 +936,20 @@ def top20_table(top20_data, t_hi, t_lo, val_label, secondary_cols=None):
 title_loc = (selected_loc_label if selected_loc != 'ALL'
              else (selected_region if selected_region != 'ALL REGIONS' else 'All Locations'))
 
-# Context pill for region/location
-if selected_loc != 'ALL':
+# Context pill — global-aware
+if has_intl and global_scope != 'NAM':
+    gc = GLOBAL_REGION_COLORS.get(global_scope, '#0f1c2e') if global_scope != 'All Global' else '#0f1c2e'
+    if global_scope == 'All Global':
+        scope_label = f'Global · NAM + {len(intl_locations)} intl labs'
+    else:
+        scope_label = f'{global_scope} · {len(intl_region_map.get(global_scope, []))} labs'
+    loc_pill = (f'<span style="background:{gc}22;color:{gc};padding:2px 10px;'
+                f'border-radius:4px;font-size:0.72rem;font-weight:600">{scope_label}</span>')
+    if selected_loc != 'ALL':
+        loc_pill += (f' &nbsp;<span style="background:#8C1D1822;color:#8C1D18;'
+                     f'padding:2px 10px;border-radius:4px;font-size:0.72rem;'
+                     f'font-weight:600">{selected_loc_label}</span>')
+elif selected_loc != 'ALL':
     rname_display = selected_region.strip('[]') if selected_region != 'ALL REGIONS' else ''
     ctx_color = REGION_COLORS.get(rname_display, '#8C1D18') if rname_display else '#8C1D18'
     loc_pill = (f'<span style="background:{ctx_color}22;color:{ctx_color};padding:2px 10px;'
@@ -911,7 +1002,16 @@ st.markdown(f"""
 # ══════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════
-tab_car, tab_pto, tab_combined = st.tabs(["📘  CARs", "📗  PTOs", "📊  Combined"])
+is_intl_scope   = (has_intl or has_intl_files) and global_scope in ('EMEA', 'APAC')
+is_global_scope = (has_intl or has_intl_files) and global_scope == 'All Global'
+
+if is_intl_scope or is_global_scope:
+    _tabs        = st.tabs(["📘  CARs"])
+    tab_car      = _tabs[0]
+    tab_pto      = None
+    tab_combined = None
+else:
+    tab_car, tab_pto, tab_combined = st.tabs(["📘  CARs", "📗  PTOs", "📊  Combined"])
 
 def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
                top20_data, val_label, show_split=False, secondary_cols_fn=None):
@@ -944,18 +1044,30 @@ def render_tab(metrics_key, wavg_key, theme_key, closed_label, t_hi, t_lo,
 
     # Build Top 20 dynamically — uses sliced range so it responds to sidebar filters
     stats_key = metrics_key.replace('_metrics', '_stats')
-    stats     = D[stats_key]
-    per_loc_metrics_key = metrics_key  # e.g. 'car_metrics'
+    stats     = D.get(stats_key, {})
+    per_loc_metrics_key = metrics_key
 
-    # Get locations in scope for current filter
-    if data_key == 'ALL':
+    if global_scope in ('EMEA', 'APAC') and has_intl:
+        scope_locs = intl_region_map.get(global_scope, [])
+    elif global_scope == 'All Global' and has_intl:
+        if data_key == 'GLOBAL:ALL':
+            scope_locs = D['all_locations'] + intl_locations
+        elif data_key in ('GLOBAL:EMEA', 'GLOBAL:APAC'):
+            scope_locs = intl_region_map.get(data_key.split(':')[1], [])
+        elif data_key.startswith('REGION:'):
+            scope_locs = [l for l in D['all_locations']
+                          if l in D['region_map'].get(data_key[7:], [])]
+        elif data_key in intl_locations:
+            scope_locs = [data_key]
+        else:
+            scope_locs = D['all_locations'] + intl_locations
+    elif data_key == 'ALL':
         scope_locs = D['all_locations']
     elif data_key.startswith('REGION:'):
-        region = data_key[7:]
         scope_locs = [l for l in D['all_locations']
-                      if l in D['region_map'].get(region, [])]
+                      if l in D['region_map'].get(data_key[7:], [])]
     else:
-        scope_locs = [data_key] if data_key in stats else []
+        scope_locs = [data_key] if (data_key in stats or data_key in intl_locations) else []
 
     # Compute per-location stats across the FULL SELECTED SLICE
     all_loc_metrics = D[per_loc_metrics_key]
@@ -990,23 +1102,25 @@ with tab_car:
     render_tab('car_metrics', 'car_wavg', 'car', 'CARs Closed',
                D['car_t_hi'], D['car_t_lo'], D['car_top20'], 'CARs Ov90')
 
-with tab_pto:
-    render_tab('pto_metrics', 'pto_wavg', 'pto', 'PTOs Closed',
-               D['pto_t_hi'], D['pto_t_lo'], D['pto_top20'], 'PTOs Ov90')
+if tab_pto is not None:
+    with tab_pto:
+        render_tab('pto_metrics', 'pto_wavg', 'pto', 'PTOs Closed',
+                   D['pto_t_hi'], D['pto_t_lo'], D['pto_top20'], 'PTOs Ov90')
 
-with tab_combined:
-    def cmb_sec(top20):
-        car_lm = D['car_metrics']
-        pto_lm = D['pto_metrics']
-        def get_slice_ov(loc_metrics, loc):
-            lm = loc_metrics.get(loc, [])
-            s = lm[start_idx:end_idx + 1] if lm else []
-            return s[-1]['ov90'] if s else 0  # snapshot at last month of slice
-        return [{'CAR >90': get_slice_ov(car_lm, i['loc']),
-                 'PTO >90': get_slice_ov(pto_lm, i['loc'])} for i in top20]
-    render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
-               D['cmb_t_hi'], D['cmb_t_lo'], D['cmb_top20'], 'Total Ov90',
-               show_split=True, secondary_cols_fn=cmb_sec)
+if tab_combined is not None:
+    with tab_combined:
+        def cmb_sec(top20):
+            car_lm = D['car_metrics']
+            pto_lm = D['pto_metrics']
+            def get_slice_ov(loc_metrics, loc):
+                lm = loc_metrics.get(loc, [])
+                s = lm[start_idx:end_idx + 1] if lm else []
+                return s[-1]['ov90'] if s else 0
+            return [{'CAR >90': get_slice_ov(car_lm, i['loc']),
+                     'PTO >90': get_slice_ov(pto_lm, i['loc'])} for i in top20]
+        render_tab('cmb_metrics', 'cmb_wavg', 'combined', 'Total Closed (CARs + PTOs)',
+                   D['cmb_t_hi'], D['cmb_t_lo'], D['cmb_top20'], 'Total Ov90',
+                   show_split=True, secondary_cols_fn=cmb_sec)
 
 # ── Export ────────────────────────────────────────────────────────
 if export_reg_btn:

@@ -241,7 +241,6 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         ws.row_dimensions[3].height = 32
 
         row_num = 4
-        ws.sheet_properties.outlinePr.summaryBelow = False  # collapse button above region row
         for region in region_order:
             if region not in region_map:
                 continue
@@ -264,11 +263,9 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 ws.cell(row=row_num, column=ci).border    = mkborder(
                     thick_top=True, ytd_left=(ci == 5))
             ws.row_dimensions[row_num].height = 18
-            region_header_row = row_num
             row_num += 1
 
-            # Location rows — grouped so they collapse under the region header
-            loc_start = row_num
+            # Location rows — ALL locations from region_map (including zero-activity)
             for loc in locs:
                 ye_avg,  ye_ov,  ye_cls   = calc_metrics_for_range(D[met_key], loc, ye_start, last_dec_idx)
                 ytd_avg, ytd_ov, ytd_cls  = calc_metrics_for_range(D[met_key], loc, ytd_start, NM - 1)
@@ -283,8 +280,6 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                     ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
                     ws.cell(row=row_num, column=ci).border    = mkborder(ytd_left=(ci == 5))
                 ws.row_dimensions[row_num].height = 16
-                ws.row_dimensions[row_num].outline_level = 1
-                ws.row_dimensions[row_num].hidden = False
                 row_num += 1
 
         # ── NAM TOTAL row ──────────────────────────────────────────
