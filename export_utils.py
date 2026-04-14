@@ -117,7 +117,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     - Full Year columns B-D, YTD columns E-G with visual left-border separator
     - Cross-check verified: numbers match dashboard metrics
     """
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from datetime import datetime
     from openpyxl.utils import get_column_letter
     import numpy as np
 
@@ -125,7 +125,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         as_of_date = datetime.now().strftime("%b %d, %Y")
 
     wb          = Workbook()
-    months      = D['month_labels']
+    months = D['month_labels']
+    NM = len(months)
     last_dec_idx = D['last_dec_idx']
     last_dec_yr  = D['last_dec_year']
     idx_2026 = next((i for i, m in enumerate(months) if m == 'Jan 2026'), 0)
@@ -295,8 +296,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         nam_key = 'ALL'
         nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
         post_avg, _, _ = calc_metrics_for_range(D[met_key], nam_key, idx_2026, NM - 1)
+        nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
-        ws.cell(row=row_num, column=1, value='NAM TOTAL').font = mfont(bold=True, size=10, color='FFFFFF')
         nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, post_avg, '']
         for ci, v in enumerate(nam_vals, 2):
             c = ws.cell(row=row_num, column=ci, value=v)
