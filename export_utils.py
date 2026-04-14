@@ -163,7 +163,10 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     cur_yr    = int(months[-1].split()[-1])
     ytd_start = next((i for i, m in enumerate(months) if m == f'Jan {cur_yr}'), 0)
 
-    def calc_metrics_for_range(metrics_dict, loc_key, start_i, end_i):
+    def init_full_avg(metrics_dict, key):
+        # Compute weighted avg over the full month range (0 … NM‑1) for the init‑2026 metrics
+        avg, _, _ = calc_metrics_for_range(metrics_dict, key, 0, NM - 1)
+        return avg
         """Weighted avg_days, last_ov90, total_closed for a month range.
         Uses same logic as dashboard — only closed records."""
         rows = metrics_dict.get(loc_key, [])
@@ -257,7 +260,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
             ws.cell(row=row_num, column=1, value=region).font = mfont(bold=True, size=10, color='0D1117')
             # post‑2026 average (using all months from Jan 2026 onward)
-            post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), reg_key, idx_2026, NM - 1)
+            post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), reg_key)
             vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, post_avg, '']
             for ci, v in enumerate(vals, 2):
                 c = ws.cell(row=row_num, column=ci, value=v)
@@ -279,7 +282,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
                 alt_fill = hfill('FAFBFC') if row_num % 2 == 0 else hfill('FFFFFF')
                 ws.cell(row=row_num, column=1, value=f'  {loc_display(loc)}').font = mfont(size=9)
-                post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), loc, idx_2026, NM - 1)
+                post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), loc)
                 loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, post_avg, '']
                 for ci, v in enumerate(loc_vals, 2):
                     ws.cell(row=row_num, column=ci, value=v).font = mfont(size=9)
@@ -296,9 +299,9 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         nam_key = 'ALL'
         nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
         # init_key = met_key + '_init2026'
-        post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), nam_key, idx_2026, NM - 1)
+        # post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), nam_key, idx_2026, NM - 1)
         # metrics_dict = D.get(init_key, D[met_key])
-        # post_avg, _, _ = calc_metrics_for_range(metrics_dict, nam_key, idx_2026, NM - 1)
+                    post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), nam_key)
         nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
         nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, post_avg, '']
@@ -319,7 +322,30 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         for col in ['E', 'F', 'G']:
             ws.column_dimensions[col].width = 18
         ws.column_dimensions['H'].width = 18
-        ws.freeze_panes = 'B4'
+        # ── Explanation tab ────────────────────────────────────────
+        if 'Explanation' not in wb.sheetnames:
+            exp_ws = wb.create_sheet('Explanation')
+            exp_ws.merge_cells('A1:H1')
+            exp_ws['A1'] = 'Regional Summary – Calculation Logic'
+            exp_ws['A1'].font = mfont(bold=True, color='FFFFFF', size=14)
+            exp_ws['A1'].fill = hfill('4A235A')
+            exp_ws['A1'].alignment = CA
+            # Write a brief description for each column
+            explanations = [
+                'Region / Location: Name of region or specific location.',
+                'Wtd Avg Days to Complete: Weighted average of days to close (closed records only) for the Full Year.',
+                'Open >90 as of Dec 31: Number of open items that have been open >90 days at year‑end.',
+                'Total Closed: Count of items closed in the Full Year.',
+                'Wtd Avg Days to Complete (YTD): Same weighted average but only for the year‑to‑date period.',
+                'Open >90 (Current): Open >90 count as of the most recent month.',
+                'Total Closed (YTD): Closed count for the YTD period.',
+                'Weighted Avg Days (≥2026): Weighted average calculated **only on records whose initiation date (init_date) is on or after Jan 1 2026**, using the full span of months in the data set.',
+                'Notes: Reserved for manual comments.'
+            ]
+            for i, txt in enumerate(explanations, start=2):
+                exp_ws.cell(row=i, column=1, value=txt).font = mfont(size=10)
+                exp_ws.cell(row=i, column=1).alignment = CL
+            exp_ws.column_dimensions['A'].width = 100
 
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
