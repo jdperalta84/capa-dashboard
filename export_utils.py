@@ -257,9 +257,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
             ws.cell(row=row_num, column=1, value=region).font = mfont(bold=True, size=10, color='0D1117')
             # post‑2026 average (using all months from Jan 2026 onward)
-            init_key = met_key + '_init2026'
-        metrics_dict = D.get(init_key, D[met_key])
-        post_avg, _, _ = calc_metrics_for_range(metrics_dict, reg_key, idx_2026, NM - 1)
+            post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), reg_key, idx_2026, NM - 1)
             vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, post_avg, '']
             for ci, v in enumerate(vals, 2):
                 c = ws.cell(row=row_num, column=ci, value=v)
@@ -281,9 +279,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
                 alt_fill = hfill('FAFBFC') if row_num % 2 == 0 else hfill('FFFFFF')
                 ws.cell(row=row_num, column=1, value=f'  {loc_display(loc)}').font = mfont(size=9)
-                init_key = met_key + '_init2026'
-                metrics_dict = D.get(init_key, D[met_key])
-                post_avg, _, _ = calc_metrics_for_range(metrics_dict, loc, idx_2026, NM - 1)
+                post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), loc, idx_2026, NM - 1)
                 loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, post_avg, '']
                 for ci, v in enumerate(loc_vals, 2):
                     ws.cell(row=row_num, column=ci, value=v).font = mfont(size=9)
@@ -299,9 +295,10 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         # ── NAM TOTAL row ──────────────────────────────────────────
         nam_key = 'ALL'
         nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
-        init_key = met_key + '_init2026'
-        metrics_dict = D.get(init_key, D[met_key])
-        post_avg, _, _ = calc_metrics_for_range(metrics_dict, nam_key, idx_2026, NM - 1)
+        # init_key = met_key + '_init2026'
+        post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), nam_key, idx_2026, NM - 1)
+        # metrics_dict = D.get(init_key, D[met_key])
+        # post_avg, _, _ = calc_metrics_for_range(metrics_dict, nam_key, idx_2026, NM - 1)
         nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
         nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, post_avg, '']
