@@ -167,18 +167,20 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         # Compute weighted avg over the full month range (0 … NM‑1) for the init‑2026 metrics
         avg, _, _ = calc_metrics_for_range(metrics_dict, key, 0, NM - 1)
         return avg
+
+    def calc_metrics_for_range(metrics_dict, loc_key, start_i, end_i):
         """Weighted avg_days, last_ov90, total_closed for a month range.
         Uses same logic as dashboard — only closed records."""
         rows = metrics_dict.get(loc_key, [])
         if not rows:
             return 0, 0, 0
-        slc  = rows[start_i:end_i + 1]
+        slc = rows[start_i:end_i + 1]
         if not slc:
             return 0, 0, 0
         total_closed = sum(r['closed'] for r in slc)
-        total_days   = sum(r['closed'] * r['avg_days'] for r in slc)
-        wtd_avg      = int(round(total_days / total_closed)) if total_closed > 0 else 0
-        last_ov      = rows[end_i]['ov90'] if end_i < len(rows) else 0
+        total_days = sum(r['closed'] * r['avg_days'] for r in slc)
+        wtd_avg = int(round(total_days / total_closed)) if total_closed > 0 else 0
+        last_ov = rows[end_i]['ov90'] if end_i < len(rows) else 0
         return wtd_avg, last_ov, total_closed
 
     TABS = [
@@ -295,13 +297,10 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 ws.row_dimensions[row_num].hidden = False
                 row_num += 1
 
-        # ── NAM TOTAL row ──────────────────────────────────────────
-        nam_key = 'ALL'
+                nam_key = 'ALL'
         nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
-        # init_key = met_key + '_init2026'
-        # post_avg, _, _ = calc_metrics_for_range(D.get(met_key + '_init2026', D[met_key]), nam_key, idx_2026, NM - 1)
-        # metrics_dict = D.get(init_key, D[met_key])
-                    post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), nam_key)
+        # Compute init‑2026 weighted avg over the full month span
+        post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), nam_key)
         nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
         nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, post_avg, '']
