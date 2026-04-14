@@ -668,7 +668,21 @@ def load_and_compute(file_source, exclude_jn=False) -> dict:
 
     result = _compute_metrics(car, pto, months, all_locations, region_map,
                               car_open=car_open, pto_open=pto_open)
-    result['loc_id_map'] = loc_id_map
+    # Compute init‑2026 metrics (only records initiated in 2026 or later)
+    init_start = pd.Timestamp('2026-01-01')
+    car_init = car[car['init_date'] >= init_start]
+    pto_init = pto[pto['init_date'] >= init_start]
+    result_init = _compute_metrics(car_init, pto_init, months, all_locations, region_map,
+                                   car_open=None, pto_open=None)
+    # Merge init‑2026 metrics into the main result with distinct keys
+    result.update({
+        'car_metrics_init2026': result_init['car_metrics'],
+        'car_wavg_init2026':    result_init['car_wavg'],
+        'pto_metrics_init2026': result_init['pto_metrics'],
+        'pto_wavg_init2026':    result_init['pto_wavg'],
+        'cmb_metrics_init2026': result_init['cmb_metrics'],
+        'cmb_wavg_init2026':    result_init['cmb_wavg'],
+    })
     result['loaded_at']   = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
     result['file_path']   = source_name
     result['file_format'] = fmt
