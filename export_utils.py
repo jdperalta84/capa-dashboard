@@ -128,7 +128,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     months      = D['month_labels']
     last_dec_idx = D['last_dec_idx']
     last_dec_yr  = D['last_dec_year']
-    NM           = len(months)
+    idx_2026 = next((i for i, m in enumerate(months) if m == 'Jan 2026'), 0)
     region_map   = D['region_map']
     region_order = D['region_order']
     loc_id_map   = D.get('loc_id_map', {})
@@ -198,7 +198,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         if first: ws.title = tab_name; first = False
 
         # ── Row 1: Title ───────────────────────────────────────────
-        ws.merge_cells('A1:H1')
+        ws.merge_cells('A1:I1')
         ws['A1'] = f'{tab_name} Regional Summary — As of {as_of_date}'
         ws['A1'].font      = mfont(bold=True, color='FFFFFF', size=12)
         ws['A1'].fill      = hfill(dark_hex)
@@ -224,12 +224,13 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         # ── Row 3: Column headers ──────────────────────────────────
         headers = [
             ('Region / Location',         False),
-            ('Wtd Avg Days to Close',      False),
+            ('Wtd Avg Days to Complete',      False),
             (f'Open >90 as of Dec 31',     False),
             ('Total Closed',               False),
-            ('Wtd Avg Days to Close',      True),   # YTD start — separator
+            ('Wtd Avg Days to Complete',      True),   # YTD start — separator
             (f'Open >90 (Current)',        False),
             ('Total Closed',               False),
+            ('Weighted Avg Days (≥2026)',            False),
             ('Notes',                      False),
         ]
         for ci, (h, is_ytd_start) in enumerate(headers, 1):
@@ -254,11 +255,13 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
             ytd_avg, ytd_ov, ytd_cls  = calc_metrics_for_range(D[met_key], reg_key, ytd_start, NM - 1)
 
             ws.cell(row=row_num, column=1, value=region).font = mfont(bold=True, size=10, color='0D1117')
-            vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, '']
+            # post‑2026 average (using all months from Jan 2026 onward)
+            post_avg, _, _ = calc_metrics_for_range(D[met_key], reg_key, idx_2026, NM - 1)
+            vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, post_avg, '']
             for ci, v in enumerate(vals, 2):
                 c = ws.cell(row=row_num, column=ci, value=v)
                 c.font = mfont(bold=True, size=10)
-            for ci in range(1, 9):
+            for ci in range(1, 10):
                 ws.cell(row=row_num, column=ci).fill      = reg_fill
                 ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
                 ws.cell(row=row_num, column=ci).border    = mkborder(
@@ -275,10 +278,11 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
                 alt_fill = hfill('FAFBFC') if row_num % 2 == 0 else hfill('FFFFFF')
                 ws.cell(row=row_num, column=1, value=f'  {loc_display(loc)}').font = mfont(size=9)
-                loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, '']
+                post_avg, _, _ = calc_metrics_for_range(D[met_key], loc, idx_2026, NM - 1)
+                loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls, post_avg, '']
                 for ci, v in enumerate(loc_vals, 2):
                     ws.cell(row=row_num, column=ci, value=v).font = mfont(size=9)
-                for ci in range(1, 9):
+                for ci in range(1, 10):
                     ws.cell(row=row_num, column=ci).fill      = alt_fill
                     ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
                     ws.cell(row=row_num, column=ci).border    = mkborder(ytd_left=(ci == 5))
@@ -290,14 +294,14 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         # ── NAM TOTAL row ──────────────────────────────────────────
         nam_key = 'ALL'
         nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
-        nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
+        post_avg, _, _ = calc_metrics_for_range(D[met_key], nam_key, idx_2026, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
         ws.cell(row=row_num, column=1, value='NAM TOTAL').font = mfont(bold=True, size=10, color='FFFFFF')
-        nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, '']
+        nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, post_avg, '']
         for ci, v in enumerate(nam_vals, 2):
             c = ws.cell(row=row_num, column=ci, value=v)
             c.font = mfont(bold=True, size=10, color='FFFFFF')
-        for ci in range(1, 9):
+        for ci in range(1, 10):
             ws.cell(row=row_num, column=ci).fill      = nam_fill
             ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
             ws.cell(row=row_num, column=ci).border    = mkborder(thick_top=True, ytd_left=(ci == 5))
@@ -310,7 +314,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
             ws.column_dimensions[col].width = 18
         for col in ['E', 'F', 'G']:
             ws.column_dimensions[col].width = 18
-        ws.column_dimensions['H'].width = 20
+        ws.column_dimensions['H'].width = 18
         ws.freeze_panes = 'B4'
 
     buf = io.BytesIO()

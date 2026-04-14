@@ -682,7 +682,7 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
             "CYCLE TIME",
             colors['wavg'], colors['primary'], '1.8rem',
             cur_wavg,
-            "Wtd Avg Days to Close",
+            "Wtd Avg Days to Complete",
             f"YTD running avg — resets Jan",
             colors['primary'], ye_wavg), unsafe_allow_html=True)
 
@@ -696,10 +696,10 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
     fig.add_trace(go.Bar(
-        x=slice_months, y=closed, name="Closed",
+        x=slice_months, y=closed, name="Completed",
         marker_color=colors['primary'], opacity=0.8,
         marker_line_width=0,
-        hovertemplate="<b>%{x}</b><br>Closed: %{y}<extra></extra>"),
+        hovertemplate="<b>%{x}</b><br>Completed: %{y}<extra></extra>"),
         secondary_y=False)
 
     if show_split:
@@ -791,7 +791,7 @@ def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
 def monthly_table(sliced_metrics, sliced_wavg, extra_cols=None):
     rows = []
     for i, (m, r, w) in enumerate(zip(slice_months, sliced_metrics, sliced_wavg)):
-        row = {'Month': m, 'Closed': r['closed'], 'Open >90': r['ov90'], 'Wtd Avg': w}
+        row = {'Month': m, 'Completed': r['closed'], 'Open >90': r['ov90'], 'Wtd Avg': w}
         if extra_cols:
             row.update(extra_cols[i])
         rows.append(row)

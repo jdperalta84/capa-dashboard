@@ -66,7 +66,7 @@ LOCATION_REGION = {
     "Cincinnati (Erlanger), OH":             "USMW & River",
     "Collins (Purvis), MS":                  "USMW & River",
     "Corpus Christi, TX":                    "USGC",
-    "Corpus Christi, TX (CITGO Lab)":        "USGC",
+    "Corpus Christi, TX (CITGO Office)":        "USGC",
     "Cushing, OK":                           "USGC",
     "Decatur, AL":                           "USMW & River",
     "Freeport, TX":                          "USGC",
@@ -761,7 +761,7 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     if not combined_loc_id:
         combined_loc_id = {}
 
-    # Use all locations from List source so zero-activity labs appear in UI
+    # Use all locations from List source so zero-activity offices appear in UI
     all_locs_in_source = sorted(k for k in combined_loc_region.keys()
                                 if k not in ('nan', '', 'None'))
     region_map = _build_region_map(all_locs_in_source, combined_loc_region)
