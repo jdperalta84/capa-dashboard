@@ -800,6 +800,22 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
 
     result = _compute_metrics(car_combined, pto_combined, months, all_locations, region_map,
                               car_open=car_open_combined, pto_open=pto_open_combined)
+
+    # Compute init-2026 metrics (only records initiated on or after Jan 1 2026)
+    init_start = pd.Timestamp('2026-01-01')
+    car_init = car_combined[car_combined['init_date'] >= init_start]
+    pto_init = pto_combined[pto_combined['init_date'] >= init_start]
+    result_init = _compute_metrics(car_init, pto_init, months, all_locations, region_map,
+                                   car_open=None, pto_open=None)
+    result.update({
+        'car_metrics_init2026': result_init['car_metrics'],
+        'car_wavg_init2026':    result_init['car_wavg'],
+        'pto_metrics_init2026': result_init['pto_metrics'],
+        'pto_wavg_init2026':    result_init['pto_wavg'],
+        'cmb_metrics_init2026': result_init['cmb_metrics'],
+        'cmb_wavg_init2026':    result_init['cmb_wavg'],
+    })
+
     result['loaded_at']   = pd.Timestamp.now().strftime('%m/%d/%Y %I:%M %p')
     result['file_path']   = ', '.join(source_names)
     result['file_format'] = 'multi'
