@@ -297,11 +297,10 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 ws.row_dimensions[row_num].hidden = False
                 row_num += 1
 
-                nam_key = 'ALL'
-        nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
+        nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], 'ALL', ye_start, last_dec_idx)
         # Compute init‑2026 weighted avg over the full month span
-        post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), nam_key)
-        nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
+        post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), 'ALL')
+        nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], 'ALL', ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
         nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls, post_avg, '']
         for ci, v in enumerate(nam_vals, 2):

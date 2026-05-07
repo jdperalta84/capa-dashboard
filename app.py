@@ -636,7 +636,7 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
                              else 'cmb_wavg'))
     all_months_full  = D['month_labels']
     ye_start_idx     = next((i for i, m in enumerate(all_months_full)
-                             if m.endswith(str(last_dec_yr))), last_dec_idx_full - 11)
+                             if m == f'Jan {last_dec_yr}'), 0)
     ye_slice         = full_m[ye_start_idx:last_dec_idx_full + 1]
     ye_closed        = sum(r['closed'] for r in ye_slice)
     ye_ov_snap       = full_m[last_dec_idx_full]['ov90']
