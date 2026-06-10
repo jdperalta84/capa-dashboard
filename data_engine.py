@@ -282,11 +282,16 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
         A record was open at month-end if:
           - init_date <= (month_end - 90 days)
           - close_date is NaT  OR  close_date > month_end
+        For the current (incomplete) month, cap the reference at today so
+        records don't appear overdue before they actually reach 90 days.
         """
         df = filter_df(all_df, loc_key)
         if df is None or len(df) == 0:
             return 0
-        me     = month_last_ts(m)
+        me    = month_last_ts(m)
+        today = pd.Timestamp.now().normalize() + pd.Timedelta(hours=23, minutes=59, seconds=59)
+        if me > today:
+            me = today  # current/future month: use today as reference
         cutoff = me - pd.Timedelta(days=91)   # >90 days: day 91+ is overdue
         mask_init  = df['init_date'] <= cutoff
         mask_open  = df['close_date'].isna() | (df['close_date'] > me)
