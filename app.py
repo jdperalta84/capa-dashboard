@@ -6,7 +6,8 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import io
 
-from data_engine import load_and_compute, load_and_compute_multi, REGION_ORDER, REGION_COLORS
+from data_engine import (load_and_compute, load_and_compute_multi, REGION_ORDER, REGION_COLORS,
+                         LONG_OPEN_ALLOWANCE_PCT, long_open_adjustment)
 from export_utils import export_regional_summary
 
 st.set_page_config(page_title="CAPA · PTO Dashboard", page_icon="📋",
@@ -645,6 +646,19 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     ye_ov_color      = ov_color(ye_ov_snap, t_hi, t_lo)[0]
     ye_cov_color     = ov_color(ye_closed_ov90, t_hi, t_lo)[0]
 
+    # ── Long-open (>90) adjustment ─────────────────────────────────
+    # Computed on the YTD range from the full metrics, not the selected slice,
+    # so the card always agrees with the Excel export.
+    cur_yr        = int(all_months_full[-1].split()[-1])
+    ytd_start_idx = next((i for i, m in enumerate(all_months_full)
+                          if m == f'Jan {cur_yr}'), 0)
+    ytd_closed    = sum(r['closed'] for r in full_m[ytd_start_idx:])
+    adj_pct, adj_delta, adj_total = long_open_adjustment(
+        full_w[-1], full_m[-1]['ov90'], ytd_closed)
+    ye_adj_total  = long_open_adjustment(ye_wavg, ye_ov_snap, ye_closed)[2]
+    adj_color     = '#c0392b' if adj_delta > 0 else '#0d7a4e'
+    adj_word      = 'penalty' if adj_delta > 0 else 'credit'
+
     def card(header, border, val_color, val_size, val, lbl, sub, ye_color, ye_val, ye_lbl=None):
         hdr_html = f'<div class="metric-hdr">{header}</div>' if header else ''
         ye_lbl_s = ye_lbl or ye_label
@@ -659,8 +673,8 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
           <div class="metric-ye-val" style="color:{ye_color}">{ye_val}</div>
         </div>"""
 
-    # ── 3-card layout ──────────────────────────────────────────────
-    c1, c2, c3 = st.columns(3)
+    # ── 4-card layout ──────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(card(
             "VOLUME",
@@ -685,6 +699,15 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
             "Wtd Avg Days to Complete",
             f"YTD running avg — resets Jan",
             colors['primary'], ye_wavg), unsafe_allow_html=True)
+    with c4:
+        st.markdown(card(
+            "ADJUSTED CYCLE TIME",
+            adj_color, adj_color, '1.8rem',
+            round(adj_total),
+            "Total Avg Days to Action",
+            f"{adj_pct:.0f}% >90 vs {LONG_OPEN_ALLOWANCE_PCT}% allowed "
+            f"— {adj_delta:+.1f} day {adj_word}",
+            colors['primary'], round(ye_adj_total)), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════
 # CHART  (sliced to selected date range)

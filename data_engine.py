@@ -221,6 +221,35 @@ def _is_jn(series):
 
 
 # ══════════════════════════════════════════════════════════════════
+# LONG-OPEN (>90 DAY) KPI ADJUSTMENT
+# ══════════════════════════════════════════════════════════════════
+LONG_OPEN_ALLOWANCE_PCT = 5   # % of cases allowed past 90 days with no penalty
+
+
+def long_open_adjustment(wtd_avg_days, open_ov90, total_closed):
+    """
+    Adjust the weighted average days-to-action for long-open (>90 day) cases.
+
+        C = A / (A + B) * 100      share of cases past 90 days
+        D = C - 5                  percentage points over/under the allowance
+        T + D                      adjusted days to action
+
+    D is applied to T one-for-one: a share 1 point above the allowance adds one
+    day. Above the allowance D is a penalty, below it a credit.
+
+    With no cases at all (A + B == 0) C is taken as 0, so the full allowance
+    lands as a credit and T + D goes negative.
+
+    Returns (C, D, T + D) unrounded — callers round for display only, so the
+    percentage shown never drives the arithmetic.
+    """
+    total = open_ov90 + total_closed
+    pct   = (open_ov90 / total * 100) if total > 0 else 0.0
+    delta = pct - LONG_OPEN_ALLOWANCE_PCT
+    return pct, delta, wtd_avg_days + delta
+
+
+# ══════════════════════════════════════════════════════════════════
 # SHARED METRIC ENGINE
 # ══════════════════════════════════════════════════════════════════
 def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
