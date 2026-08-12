@@ -656,8 +656,16 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     adj_pct, adj_delta, adj_total = long_open_adjustment(
         full_w[-1], full_m[-1]['ov90'], ytd_closed)
     ye_adj_total  = long_open_adjustment(ye_wavg, ye_ov_snap, ye_closed)[2]
-    adj_color     = '#c0392b' if adj_delta > 0 else '#0d7a4e'
-    adj_word      = 'penalty' if adj_delta > 0 else 'credit'
+    if adj_total is None:
+        # Nothing closed and nothing open >90 — no share to measure.
+        adj_val, adj_color = '—', colors['primary']
+        adj_sub = 'No closed cases or open >90'
+    else:
+        adj_val   = round(adj_total)
+        adj_color = '#c0392b' if adj_delta > 0 else '#0d7a4e'
+        adj_sub   = (f"{adj_pct:.0f}% >90 vs {LONG_OPEN_ALLOWANCE_PCT}% allowed "
+                     f"— {adj_delta:+.1f} day {'penalty' if adj_delta > 0 else 'credit'}")
+    ye_adj_val = '—' if ye_adj_total is None else round(ye_adj_total)
 
     def card(header, border, val_color, val_size, val, lbl, sub, ye_color, ye_val, ye_lbl=None):
         hdr_html = f'<div class="metric-hdr">{header}</div>' if header else ''
@@ -703,11 +711,10 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
         st.markdown(card(
             "ADJUSTED CYCLE TIME",
             adj_color, adj_color, '1.8rem',
-            round(adj_total),
+            adj_val,
             "Total Avg Days to Action",
-            f"{adj_pct:.0f}% >90 vs {LONG_OPEN_ALLOWANCE_PCT}% allowed "
-            f"— {adj_delta:+.1f} day {adj_word}",
-            colors['primary'], round(ye_adj_total)), unsafe_allow_html=True)
+            adj_sub,
+            colors['primary'], ye_adj_val), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════
 # CHART  (sliced to selected date range)

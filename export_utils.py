@@ -160,21 +160,20 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
     def fmt_adjustment(ws, row):
         """C as a true Excel percentage, D to one decimal, T+D in whole days."""
-        ws.cell(row=row, column=8).number_format  = '0%'
-        ws.cell(row=row, column=9).number_format  = '0.0'
-        ws.cell(row=row, column=10).number_format = '0'
+        ws.cell(row=row, column=5).number_format = '0%'
+        ws.cell(row=row, column=6).number_format = '0.0'
+        ws.cell(row=row, column=7).number_format = '0'
 
-    # ── YE index range: Jan of last_dec_yr → last_dec_idx ─────────
-    ye_start = next((i for i, m in enumerate(months) if m == f'Jan {last_dec_yr}'), 0)
+    def adj_cells(wtd_avg, ov90, closed):
+        """The three adjustment cells, left blank where the share is undefined."""
+        pct, delta, total = long_open_adjustment(wtd_avg, ov90, closed)
+        if pct is None:
+            return ['', '', '']
+        return [pct / 100, delta, total]
 
     # ── YTD range: Jan of current year → last month ───────────────
     cur_yr    = int(months[-1].split()[-1])
     ytd_start = next((i for i, m in enumerate(months) if m == f'Jan {cur_yr}'), 0)
-
-    def init_full_avg(metrics_dict, key):
-        # Compute weighted avg over the full month range (0 … NM‑1) for the init‑2026 metrics
-        avg, _, _ = calc_metrics_for_range(metrics_dict, key, 0, NM - 1)
-        return avg
 
     def calc_metrics_for_range(metrics_dict, loc_key, start_i, end_i):
         """Weighted avg_days, last_ov90, total_closed for a month range.
@@ -212,7 +211,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         if first: ws.title = tab_name; first = False
 
         # ── Row 1: Title ───────────────────────────────────────────
-        ws.merge_cells('A1:L1')
+        ws.merge_cells('A1:H1')
         ws['A1'] = f'{tab_name} Regional Summary — As of {as_of_date}'
         ws['A1'].font      = mfont(bold=True, color='FFFFFF', size=12)
         ws['A1'].fill      = hfill(dark_hex)
@@ -222,36 +221,31 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         # ── Row 2: Group headers ───────────────────────────────────
         ws.merge_cells('B2:D2')
         ws.merge_cells('E2:G2')
-        ws.merge_cells('H2:J2')
-        ws['B2'] = f'{last_dec_yr} Full Year'
-        ws['E2'] = f'YTD {as_of_date}'
-        ws['H2'] = 'Days to Completion Calculation'
-        for cell_ref, ytd in [('B2', False), ('E2', True), ('H2', True)]:
+        ws['B2'] = f'YTD {as_of_date}'
+        ws['E2'] = 'Days to Completion Calculation'
+        for cell_ref, sep in [('B2', False), ('E2', True)]:
             c = ws[cell_ref]
             c.font      = mfont(bold=True, color='FFFFFF', size=10)
             c.fill      = hfill(dark_hex)
             c.alignment = CA
-            if ytd:
+            if sep:
                 c.border = Border(left=_ytd_sep, right=_thin, top=_thin, bottom=_thin)
         ws['A2'].fill = hfill(dark_hex)
-        ws['K2'].fill = hfill(dark_hex)
-        ws['L2'].fill = hfill(dark_hex)
+        ws['H2'].fill = hfill(dark_hex)
         ws.row_dimensions[2].height = 20
 
         # ── Row 3: Column headers ──────────────────────────────────
+        # Each source column is tagged with the variable it supplies, so the
+        # formulas in the adjustment block can be traced back to a column.
         headers = [
-            ('Region / Location',         False),
-            ('Wtd Avg Days to Complete',      False),
-            (f'Open >90 as of Dec 31',     False),
-            ('Total Closed',               False),
-            ('Wtd Avg Days to Complete',      True),   # YTD start — separator
-            (f'Open >90 (Current)',        False),
-            ('Total Closed',               False),
-            ('% >90 Days\nC=A/(A+B)',      True),    # adjustment block — separator
-            (f'Penalty / Credit\nD=C-{LONG_OPEN_ALLOWANCE_PCT}', False),
-            ('Total Avg Days to Action\nT+D', False),
-            ('Weighted Avg Days (≥2026)',            False),
-            ('Notes',                      False),
+            ('Region / Location',                False),
+            ('Wtd Avg Days to Complete\n(T)',    False),
+            ('Open >90 (Current)\n(A)',          False),
+            ('Total Completed\n(B)',             False),
+            ('% >90 Days\n(C) = A/(A+B)',        True),    # adjustment block — separator
+            (f'Penalty / Credit\n(D) = C-{LONG_OPEN_ALLOWANCE_PCT}', False),
+            ('Total Avg Days to Action\n(T+D)',  False),
+            ('Notes',                            False),
         ]
         for ci, (h, is_ytd_start) in enumerate(headers, 1):
             c = ws.cell(row=3, column=ci, value=h)
@@ -271,24 +265,21 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
 
             # Region aggregate row using REGION: key
             reg_key = f'REGION:{region}'
-            ye_avg,  ye_ov,  ye_cls   = calc_metrics_for_range(D[met_key], reg_key, ye_start, last_dec_idx)
             ytd_avg, ytd_ov, ytd_cls  = calc_metrics_for_range(D[met_key], reg_key, ytd_start, NM - 1)
 
             ws.cell(row=row_num, column=1, value=region).font = mfont(bold=True, size=10, color='0D1117')
             # post‑2026 average (using all months from Jan 2026 onward)
-            post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), reg_key)
-            adj_pct, adj_delta, adj_total = long_open_adjustment(ytd_avg, ytd_ov, ytd_cls)
-            vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls,
-                    adj_pct / 100, adj_delta, adj_total, post_avg, '']
+            vals = [ytd_avg, ytd_ov, ytd_cls,
+                    *adj_cells(ytd_avg, ytd_ov, ytd_cls), '']
             for ci, v in enumerate(vals, 2):
                 c = ws.cell(row=row_num, column=ci, value=v)
                 c.font = mfont(bold=True, size=10)
             fmt_adjustment(ws, row_num)
-            for ci in range(1, 13):
+            for ci in range(1, 9):
                 ws.cell(row=row_num, column=ci).fill      = reg_fill
                 ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
                 ws.cell(row=row_num, column=ci).border    = mkborder(
-                    thick_top=True, ytd_left=(ci in (5, 8)))
+                    thick_top=True, ytd_left=(ci == 5))
             ws.row_dimensions[row_num].height = 18
             region_header_row = row_num
             row_num += 1
@@ -296,45 +287,37 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
             # Location rows — grouped so they collapse under the region header
             loc_start = row_num
             for loc in locs:
-                ye_avg,  ye_ov,  ye_cls   = calc_metrics_for_range(D[met_key], loc, ye_start, last_dec_idx)
                 ytd_avg, ytd_ov, ytd_cls  = calc_metrics_for_range(D[met_key], loc, ytd_start, NM - 1)
 
                 alt_fill = hfill('FAFBFC') if row_num % 2 == 0 else hfill('FFFFFF')
                 ws.cell(row=row_num, column=1, value=f'  {loc_display(loc)}').font = mfont(size=9)
-                post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), loc)
-                adj_pct, adj_delta, adj_total = long_open_adjustment(ytd_avg, ytd_ov, ytd_cls)
-                loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls,
-                            adj_pct / 100, adj_delta, adj_total, post_avg, '']
+                loc_vals = [ytd_avg, ytd_ov, ytd_cls,
+                            *adj_cells(ytd_avg, ytd_ov, ytd_cls), '']
                 for ci, v in enumerate(loc_vals, 2):
                     ws.cell(row=row_num, column=ci, value=v).font = mfont(size=9)
                 fmt_adjustment(ws, row_num)
-                for ci in range(1, 13):
+                for ci in range(1, 9):
                     ws.cell(row=row_num, column=ci).fill      = alt_fill
                     ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
-                    ws.cell(row=row_num, column=ci).border    = mkborder(ytd_left=(ci in (5, 8)))
+                    ws.cell(row=row_num, column=ci).border    = mkborder(ytd_left=(ci == 5))
                 ws.row_dimensions[row_num].height = 16
                 ws.row_dimensions[row_num].outline_level = 1
                 ws.row_dimensions[row_num].hidden = False
                 row_num += 1
 
                 nam_key = 'ALL'
-        nam_ye_avg,  nam_ye_ov,  nam_ye_cls  = calc_metrics_for_range(D[met_key], nam_key, ye_start, last_dec_idx)
-        # Compute init‑2026 weighted avg over the full month span
-        post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), nam_key)
         nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
-        nam_adj_pct, nam_adj_delta, nam_adj_total = long_open_adjustment(
-            nam_ytd_avg, nam_ytd_ov, nam_ytd_cls)
-        nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls,
-                    nam_adj_pct / 100, nam_adj_delta, nam_adj_total, post_avg, '']
+        nam_vals = [nam_ytd_avg, nam_ytd_ov, nam_ytd_cls,
+                    *adj_cells(nam_ytd_avg, nam_ytd_ov, nam_ytd_cls), '']
         for ci, v in enumerate(nam_vals, 2):
             c = ws.cell(row=row_num, column=ci, value=v)
             c.font = mfont(bold=True, size=10, color='FFFFFF')
         fmt_adjustment(ws, row_num)
-        for ci in range(1, 13):
+        for ci in range(1, 9):
             ws.cell(row=row_num, column=ci).fill      = nam_fill
             ws.cell(row=row_num, column=ci).alignment = CA if ci > 1 else CL
-            ws.cell(row=row_num, column=ci).border    = mkborder(thick_top=True, ytd_left=(ci in (5, 8)))
+            ws.cell(row=row_num, column=ci).border    = mkborder(thick_top=True, ytd_left=(ci == 5))
         ws.row_dimensions[row_num].height = 20
         row_num += 1
 
@@ -343,11 +326,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         for col in ['B', 'C', 'D']:
             ws.column_dimensions[col].width = 18
         for col in ['E', 'F', 'G']:
-            ws.column_dimensions[col].width = 18
-        for col in ['H', 'I', 'J']:
             ws.column_dimensions[col].width = 15
-        ws.column_dimensions['K'].width = 18
-        ws.column_dimensions['L'].width = 18
+        ws.column_dimensions['H'].width = 18
         # ── Explanation tab ────────────────────────────────────────
         if 'Explanation' not in wb.sheetnames:
             exp_ws = wb.create_sheet('Explanation')
@@ -358,23 +338,23 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
             exp_ws['A1'].alignment = CA
             # Write a brief description for each column
             explanations = [
-                'Region / Location: Name of region or specific location.',
-                'Wtd Avg Days to Complete: Weighted average of days to close (closed records only) for the Full Year.',
-                'Open >90 as of Dec 31: Number of open items that have been open >90 days at year‑end.',
-                'Total Closed: Count of items closed in the Full Year.',
-                'Wtd Avg Days to Complete (YTD): Same weighted average but only for the year‑to‑date period.',
-                'Open >90 (Current): Count of items still open that have been open >90 days as of the report date. This is "A" in the adjustment below.',
-                'Total Closed (YTD): Closed count for the YTD period. This is "B" in the adjustment below.',
+                'Column letters below are the report columns; (T), (A), (B), (C) and (D) are the KPI variables shown in each header.',
                 '',
-                'Days to Completion Calculation — adjustment for long-open (>90 day) cases:',
+                'A  Region / Location: Name of region or specific location.',
+                'B  Wtd Avg Days to Complete (T): Weighted average days to close, closed records only, for the year-to-date period.',
+                'C  Open >90 (Current) (A): Count of items still open that have been open >90 days as of the report date.',
+                'D  Total Completed (B): Count of items closed in the year-to-date period.',
+                '',
+                'Days to Completion Calculation - adjustment for long-open (>90 day) cases:',
                 f'    Up to {LONG_OPEN_ALLOWANCE_PCT}% of cases may exceed 90 days without penalty. Above that share the excess is added to the weighted average as a penalty; below it the shortfall is applied as a credit.',
-                '    % >90 Days (C): C = A / (A + B) x 100, where A = Open >90 (Current) and B = Total Closed (YTD). Note the denominator is long-open plus closed cases; open cases under 90 days are not included.',
-                f'    Penalty / Credit (D): D = C - {LONG_OPEN_ALLOWANCE_PCT}. Positive is a penalty, negative a credit. Percentage points are applied to days one-for-one.',
-                '    Total Avg Days to Action (T+D): the YTD weighted average (T) plus D. The displayed percentage is rounded, but the arithmetic uses the unrounded value.',
-                f'    Rows with no closed cases and none open >90 (A + B = 0) take C = 0, so the full {LONG_OPEN_ALLOWANCE_PCT}-point credit applies and T+D shows -{LONG_OPEN_ALLOWANCE_PCT}.',
                 '',
-                'Weighted Avg Days (≥2026): Weighted average calculated **only on records whose initiation date (init_date) is on or after Jan 1 2026**, using the full span of months in the data set.',
-                'Notes: Reserved for manual comments.'
+                'E  % >90 Days (C): C = A / (A + B) x 100, taking A from column C and B from column D. The denominator is long-open plus completed cases; open cases under 90 days are not included on either side.',
+                f'F  Penalty / Credit (D): D = C - {LONG_OPEN_ALLOWANCE_PCT}, taking C from column E. Positive is a penalty, negative a credit. Percentage points are applied to days one-for-one.',
+                'G  Total Avg Days to Action (T+D): T from column B plus D from column F, floored at zero. The displayed percentage is rounded, but the arithmetic uses the unrounded value.',
+                '',
+                '    Rows with no completed cases and none open >90 (A + B = 0) have no defined share, so columns E, F and G are left blank rather than earning a credit for inactivity.',
+                '',
+                'H  Notes: Reserved for manual comments.'
             ]
             for i, txt in enumerate(explanations, start=2):
                 exp_ws.cell(row=i, column=1, value=txt).font = mfont(size=10)
