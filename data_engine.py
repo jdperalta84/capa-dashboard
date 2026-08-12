@@ -237,16 +237,22 @@ def long_open_adjustment(wtd_avg_days, open_ov90, total_closed):
     D is applied to T one-for-one: a share 1 point above the allowance adds one
     day. Above the allowance D is a penalty, below it a credit.
 
-    With no cases at all (A + B == 0) C is taken as 0, so the full allowance
-    lands as a credit and T + D goes negative.
+    With no cases at all (A + B == 0) the share is undefined rather than zero,
+    so (None, None, None) is returned and callers leave the row blank instead
+    of awarding a credit for inactivity.
+
+    T + D is floored at zero: a credit can pull the average down but not below
+    zero days.
 
     Returns (C, D, T + D) unrounded — callers round for display only, so the
     percentage shown never drives the arithmetic.
     """
     total = open_ov90 + total_closed
-    pct   = (open_ov90 / total * 100) if total > 0 else 0.0
+    if total == 0:
+        return None, None, None
+    pct   = open_ov90 / total * 100
     delta = pct - LONG_OPEN_ALLOWANCE_PCT
-    return pct, delta, wtd_avg_days + delta
+    return pct, delta, max(0.0, wtd_avg_days + delta)
 
 
 # ══════════════════════════════════════════════════════════════════

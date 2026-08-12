@@ -164,6 +164,13 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         ws.cell(row=row, column=9).number_format  = '0.0'
         ws.cell(row=row, column=10).number_format = '0'
 
+    def adj_cells(wtd_avg, ov90, closed):
+        """The three adjustment cells, left blank where the share is undefined."""
+        pct, delta, total = long_open_adjustment(wtd_avg, ov90, closed)
+        if pct is None:
+            return ['', '', '']
+        return [pct / 100, delta, total]
+
     # ── YE index range: Jan of last_dec_yr → last_dec_idx ─────────
     ye_start = next((i for i, m in enumerate(months) if m == f'Jan {last_dec_yr}'), 0)
 
@@ -277,9 +284,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
             ws.cell(row=row_num, column=1, value=region).font = mfont(bold=True, size=10, color='0D1117')
             # post‑2026 average (using all months from Jan 2026 onward)
             post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), reg_key)
-            adj_pct, adj_delta, adj_total = long_open_adjustment(ytd_avg, ytd_ov, ytd_cls)
             vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls,
-                    adj_pct / 100, adj_delta, adj_total, post_avg, '']
+                    *adj_cells(ytd_avg, ytd_ov, ytd_cls), post_avg, '']
             for ci, v in enumerate(vals, 2):
                 c = ws.cell(row=row_num, column=ci, value=v)
                 c.font = mfont(bold=True, size=10)
@@ -302,9 +308,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 alt_fill = hfill('FAFBFC') if row_num % 2 == 0 else hfill('FFFFFF')
                 ws.cell(row=row_num, column=1, value=f'  {loc_display(loc)}').font = mfont(size=9)
                 post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), loc)
-                adj_pct, adj_delta, adj_total = long_open_adjustment(ytd_avg, ytd_ov, ytd_cls)
                 loc_vals = [ye_avg, ye_ov, ye_cls, ytd_avg, ytd_ov, ytd_cls,
-                            adj_pct / 100, adj_delta, adj_total, post_avg, '']
+                            *adj_cells(ytd_avg, ytd_ov, ytd_cls), post_avg, '']
                 for ci, v in enumerate(loc_vals, 2):
                     ws.cell(row=row_num, column=ci, value=v).font = mfont(size=9)
                 fmt_adjustment(ws, row_num)
@@ -323,10 +328,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
         post_avg = init_full_avg(D.get(met_key + '_init2026', D[met_key]), nam_key)
         nam_ytd_avg, nam_ytd_ov, nam_ytd_cls = calc_metrics_for_range(D[met_key], nam_key, ytd_start, NM - 1)
         nam_fill = hfill('1A1A2E')  # dark navy
-        nam_adj_pct, nam_adj_delta, nam_adj_total = long_open_adjustment(
-            nam_ytd_avg, nam_ytd_ov, nam_ytd_cls)
         nam_vals = [nam_ye_avg, nam_ye_ov, nam_ye_cls, nam_ytd_avg, nam_ytd_ov, nam_ytd_cls,
-                    nam_adj_pct / 100, nam_adj_delta, nam_adj_total, post_avg, '']
+                    *adj_cells(nam_ytd_avg, nam_ytd_ov, nam_ytd_cls), post_avg, '']
         for ci, v in enumerate(nam_vals, 2):
             c = ws.cell(row=row_num, column=ci, value=v)
             c.font = mfont(bold=True, size=10, color='FFFFFF')
@@ -370,8 +373,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 f'    Up to {LONG_OPEN_ALLOWANCE_PCT}% of cases may exceed 90 days without penalty. Above that share the excess is added to the weighted average as a penalty; below it the shortfall is applied as a credit.',
                 '    % >90 Days (C): C = A / (A + B) x 100, where A = Open >90 (Current) and B = Total Closed (YTD). Note the denominator is long-open plus closed cases; open cases under 90 days are not included.',
                 f'    Penalty / Credit (D): D = C - {LONG_OPEN_ALLOWANCE_PCT}. Positive is a penalty, negative a credit. Percentage points are applied to days one-for-one.',
-                '    Total Avg Days to Action (T+D): the YTD weighted average (T) plus D. The displayed percentage is rounded, but the arithmetic uses the unrounded value.',
-                f'    Rows with no closed cases and none open >90 (A + B = 0) take C = 0, so the full {LONG_OPEN_ALLOWANCE_PCT}-point credit applies and T+D shows -{LONG_OPEN_ALLOWANCE_PCT}.',
+                '    Total Avg Days to Action (T+D): the YTD weighted average (T) plus D, floored at zero. The displayed percentage is rounded, but the arithmetic uses the unrounded value.',
+                '    Rows with no closed cases and none open >90 (A + B = 0) have no defined share, so the three columns are left blank rather than earning a credit for inactivity.',
                 '',
                 'Weighted Avg Days (≥2026): Weighted average calculated **only on records whose initiation date (init_date) is on or after Jan 1 2026**, using the full span of months in the data set.',
                 'Notes: Reserved for manual comments.'
