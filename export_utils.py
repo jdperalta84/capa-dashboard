@@ -336,7 +336,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 'Open >90 as of Dec 31: Number of open items that have been open >90 days at year‑end.',
                 'Total Closed: Count of items closed in the Full Year.',
                 'Wtd Avg Days to Complete (YTD): Same weighted average but only for the year‑to‑date period.',
-                'Open >90 (Current): Open >90 count as of the most recent month.',
+                'Open >90 (Current): Count of items still open that have been open >90 days as of the report date.',
                 'Total Closed (YTD): Closed count for the YTD period.',
                 'Weighted Avg Days (≥2026): Weighted average calculated **only on records whose initiation date (init_date) is on or after Jan 1 2026**, using the full span of months in the data set.',
                 'Notes: Reserved for manual comments.'

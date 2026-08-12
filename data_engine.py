@@ -231,6 +231,7 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
            record counted if: init_date <= (month_end - 90 days)
                           AND (close_date is NaT  OR  close_date > month_end)
            Uses ALL records (closed + open) so historical snapshots are correct.
+           The current month is snapshotted as of now, not its future month-end.
            car_open / pto_open are currently-open records (no close_date).
            car_closed / pto_closed are closed records (have close_date).
            Combined into car_all / pto_all for ov90 evaluation.
@@ -240,6 +241,7 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
 
     NM           = len(months)
     month_labels = [m.strftime('%b %Y') for m in months]
+    _now         = pd.Timestamp.now()
 
     _empty_df = pd.DataFrame(columns=['loc', 'init_date', 'close_date'])
 
@@ -274,7 +276,11 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
 
     def month_last_ts(m):
         last = _mr(m.year, m.month)[1]
-        return pd.Timestamp(m.year, m.month, last, 23, 59, 59)
+        end  = pd.Timestamp(m.year, m.month, last, 23, 59, 59)
+        # An in-progress month has no month-end yet; snapshotting at the future
+        # month-end would age every open record forward and count items that
+        # have not actually passed 90 days.
+        return min(end, _now)
 
     def ov90_snapshot(all_df, loc_key, m):
         """
@@ -282,6 +288,8 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
         A record was open at month-end if:
           - init_date <= (month_end - 90 days)
           - close_date is NaT  OR  close_date > month_end
+        For the current (partial) month the snapshot is taken as of now, so the
+        latest month reflects true ages rather than projected ones.
         """
         df = filter_df(all_df, loc_key)
         if df is None or len(df) == 0:

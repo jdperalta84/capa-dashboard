@@ -599,7 +599,7 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
     ye_label          = f"{last_dec_yr} YE"
 
     closed_list   = [r['closed'] for r in metrics]
-    ov_snap_list  = [r['ov90']   for r in metrics]   # currently open >90 at month-end
+    ov_snap_list  = [r['ov90']   for r in metrics]   # open >90 at month-end (current month: as of now)
 
     total_closed  = sum(closed_list)
     last_ov_snap  = ov_snap_list[-1] if ov_snap_list else 0
@@ -691,7 +691,7 @@ def scorecard(metrics, wavg_vals, colors, closed_label, t_hi, t_lo):
 # ══════════════════════════════════════════════════════════════════
 def build_chart(sliced_metrics, sliced_wavg, colors, title, show_split=False):
     closed   = [r['closed']    for r in sliced_metrics]
-    ov90     = [r['ov90']   for r in sliced_metrics]   # snapshot per month-end
+    ov90     = [r['ov90']   for r in sliced_metrics]   # snapshot per month-end (current month: as of now)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
