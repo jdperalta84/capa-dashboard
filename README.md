@@ -58,6 +58,13 @@ The region filter, dashboard metrics, location rankings, and regional Excel
 summary all use the selected grouping. Turn it off to use the region assignments
 in the uploaded workbook. The overall NAM totals do not change.
 
+The regional Excel summary opens with the Explanation sheet, followed by CARs,
+PTOs, and Combined. The Completed Records and Open Over 90 Days sheets list the
+individual CARs and PTOs behind columns D and C. They reflect the selected JN
+and Canada settings, and use the same snapshot time and deduplicated records as
+the summary. The regional export covers all locations, regardless of the
+dashboard's region and location selections.
+
 ---
 
 ## Adding / Editing Regions

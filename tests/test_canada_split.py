@@ -61,6 +61,8 @@ class CanadaSplitTests(unittest.TestCase):
     def test_excel_export_matches_grouping_and_metrics(self):
         for result in (self.unsplit, self.split, self.multi):
             wb = openpyxl.load_workbook(io.BytesIO(export_regional_summary(result)), data_only=True)
+            self.assertEqual(wb.sheetnames, ['Explanation', 'CARs', 'PTOs', 'Combined',
+                                             'Completed Records', 'Open Over 90 Days'])
             for name, metric in [('CARs', 'car_metrics'), ('PTOs', 'pto_metrics'), ('Combined', 'cmb_metrics')]:
                 rows = {str(row[0]).strip(): row for row in wb[name].iter_rows(values_only=True)
                         if row[0] is not None}
@@ -68,6 +70,16 @@ class CanadaSplitTests(unittest.TestCase):
                 for region in result['region_map']:
                     self.assertEqual(rows[region][2], result[metric]['REGION:' + region][-1]['ov90'])
             self.assertEqual(result['cmb_metrics']['ALL'], self.split['cmb_metrics']['ALL'])
+
+            completed = list(wb['Completed Records'].iter_rows(min_row=5, values_only=True))
+            aged = list(wb['Open Over 90 Days'].iter_rows(min_row=5, values_only=True))
+            self.assertEqual([(r[0], r[4]) for r in completed], [('CAR', 'C1')])
+            self.assertEqual({(r[0], r[4]) for r in aged}, {('CAR', 'C2'), ('PTO', 'P1')})
+            current_year = result['month_labels'][-1].split()[-1]
+            ytd = [row for label, row in zip(result['month_labels'], result['cmb_metrics']['ALL'])
+                   if label.endswith(current_year)]
+            self.assertEqual(len(completed), sum(r['closed'] for r in ytd))
+            self.assertEqual(len(aged), result['cmb_metrics']['ALL'][-1]['ov90'])
 
     def test_master_format_retains_open_records(self):
         wb = openpyxl.Workbook()
@@ -77,6 +89,9 @@ class CanadaSplitTests(unittest.TestCase):
         now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         car.append(['Hamilton (Burlington), ON', now - timedelta(days=120), None, 'issue', 'A', 'C1'])
         car.append(['Portland, ME', now - timedelta(days=120), now - timedelta(days=1), 'issue', 'A', 'C2'])
+        car.append(['Hamilton (Burlington), ON', now - timedelta(days=90), None, 'issue', 'A', 'C3'])
+        car.append(['Hamilton (Burlington), ON', now - timedelta(days=91), None, '=not a formula', 'A', 'C4'])
+        car.cell(car.max_row, 4).data_type = 's'
         pto = wb.create_sheet('Data - PTOs')
         pto.append(['location', 'init_date', 'close_date', 'description', 'initials', 'pto_number'])
         pto.append(['Hamilton (Burlington), ON', now - timedelta(days=120), None, 'issue', 'JN', 'P1'])
@@ -88,8 +103,12 @@ class CanadaSplitTests(unittest.TestCase):
         stream = io.BytesIO()
         wb.save(stream)
         result = load_and_compute(io.BytesIO(stream.getvalue()), exclude_jn=True, split_canada=True)
-        self.assertEqual(result['car_metrics']['REGION:Canada'][-1]['ov90'], 1)
+        self.assertEqual(result['car_metrics']['REGION:Canada'][-1]['ov90'], 2)
         self.assertEqual(result['pto_metrics']['REGION:Canada'][-1]['ov90'], 0)
+        report = openpyxl.load_workbook(io.BytesIO(export_regional_summary(result)), data_only=False)
+        rows = list(report['Open Over 90 Days'].iter_rows(min_row=5, values_only=True))
+        self.assertEqual({row[4] for row in rows}, {'C1', 'C4'})
+        self.assertEqual(next(row[8] for row in rows if row[4] == 'C4'), "'=not a formula")
 
 
 if __name__ == '__main__':

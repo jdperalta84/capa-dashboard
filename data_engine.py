@@ -482,6 +482,13 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
         'region_map':       region_map,
         'region_order':     region_order_out,
         'region_colors':    REGION_COLORS,
+        # Preserve the normalized records and the exact cutoff used for the
+        # latest snapshot so exported detail reconciles to the summary.
+        'snapshot_at':      month_last_ts(months[-1]),
+        'record_details': {
+            'CAR': (car_closed, car_open),
+            'PTO': (pto_closed, pto_open),
+        },
     }
 
 

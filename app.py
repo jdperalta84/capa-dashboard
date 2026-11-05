@@ -1049,8 +1049,9 @@ with tab_combined:
 
 # ── Export ────────────────────────────────────────────────────────
 if export_reg_btn:
-    buf = export_regional_summary(D, as_of_date=datetime.now().strftime("%b %d, %Y"))
+    snapshot_date = D['snapshot_at']
+    buf = export_regional_summary(D, as_of_date=snapshot_date.strftime("%b %d, %Y"))
     st.sidebar.download_button(
         "⬇ Download Regional Summary", buf,
-        file_name=f"CAPA_Regional_Summary_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        file_name=f"CAPA_Regional_Summary_{snapshot_date.strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
