@@ -21,8 +21,8 @@ from pathlib import Path
 
 
 # ── Region display order & colors ─────────────────────────────────
-REGION_ORDER = ['USWC', 'USGC', 'USNE', 'USMW & River', 'USMA & Carib',
-                'Canada', 'NAM/Chem', 'NAM/LPG', 'ADD/Calib',
+REGION_ORDER = ['USWC', 'USGC', 'USNE', 'Canada', 'USMW & River', 'USMA & Carib',
+                'NAM/Chem', 'NAM/LPG', 'ADD/Calib',
                 # Legacy region names from older pivot files
                 'USNE, USMW & Canada', 'SE & Caribbean', 'Calibration']
 
@@ -208,6 +208,39 @@ def _build_region_map(locations, loc_region_lookup):
             continue
         region_map.setdefault(region, []).append(loc)
     return region_map
+
+
+# The six Canadian locations used in the NAM Q3 Canada split. IDs allow
+# renamed locations to remain identifiable; names support workbooks without IDs.
+CANADA_LOCATION_IDS = {'188', '189', '194', '197', '198', '199'}
+CANADA_LOCATION_NAMES = {
+    'halifax (dartmouth), ns', 'hamilton (burlington), on',
+    'levis (quebec city), quebec', 'montreal, qc',
+    "newfoundland (arnold's cove)", 'st john, nb',
+}
+
+
+def _split_canada_region(region_map, loc_id_map):
+    """Move known Canadian locations out of USNE without changing NAM totals."""
+    result = {region: list(locations) for region, locations in region_map.items()}
+    canada = result.setdefault('Canada', [])
+    for region in ('USNE', 'USNE, USMW & Canada'):
+        remaining = []
+        for loc in result.get(region, []):
+            loc_id = str(loc_id_map.get(loc, '')).strip().removesuffix('.0')
+            if loc_id in CANADA_LOCATION_IDS or loc.strip().casefold() in CANADA_LOCATION_NAMES:
+                if loc not in canada:
+                    canada.append(loc)
+            else:
+                remaining.append(loc)
+        if region in result:
+            if remaining:
+                result[region] = remaining
+            else:
+                del result[region]
+    if not canada:
+        result.pop('Canada', None)
+    return result
 
 
 def _is_void(series):
@@ -424,9 +457,7 @@ def _compute_metrics(car_closed, pto_closed, months, all_locations, region_map,
                  'avg_ov': stats[l]['avg_ov'],
                  'total_closed': stats[l]['total_closed']} for l in ranked]
 
-    preferred = ['USWC', 'USGC', 'USNE', 'USMW & River', 'USMA & Carib',
-                 'Canada', 'NAM/Chem', 'NAM/LPG', 'ADD/Calib',
-                 'USNE, USMW & Canada', 'SE & Caribbean', 'Calibration']
+    preferred = REGION_ORDER
     active_regions   = list(region_map.keys())
     region_order_out = [r for r in preferred if r in active_regions] + \
                        [r for r in active_regions if r not in preferred]
@@ -502,7 +533,7 @@ def _load_master(source, exclude_jn=False):
     car_raw = _read_source(source, 'Data - CARs')
     pto_raw = _read_source(source, 'Data - PTOs')
 
-    def prep(df):
+    def prep(df, number_col):
         df = df.copy()
         df['loc']         = df['location'].astype(str).str.strip()
         df['init_date']   = pd.to_datetime(df['init_date'],   errors='coerce')
@@ -510,17 +541,23 @@ def _load_master(source, exclude_jn=False):
         df['days2close']  = (df['close_date'] - df['init_date']).dt.days
         df['description'] = df.get('description', pd.Series([''] * len(df))).fillna('')
         df['initials']    = df.get('initials',    pd.Series([''] * len(df))).fillna('')
-        df = df[df['init_date'].notna() & df['close_date'].notna()]
+        if number_col in df.columns:
+            df['record_num'] = df[number_col].fillna('').astype(str).str.strip()
+        df = df[df['init_date'].notna()]
         df = df[df['loc'].notna() & (df['loc'] != 'nan') & (df['loc'] != '')]
-        return df
+        df = df[~_is_void(df['description'])]
+        closed = df[df['close_date'].notna()].copy()
+        closed = closed[(closed['days2close'] >= 0) & (closed['days2close'] < 3650)]
+        return closed, df[df['close_date'].isna()].copy()
 
-    car = prep(car_raw)
-    pto = prep(pto_raw)
+    car, car_open = prep(car_raw, 'car_number')
+    pto, pto_open = prep(pto_raw, 'pto_number')
 
     _lr, _lid    = _read_list_source(source)
     loc_region   = _lr  or LOCATION_REGION
     loc_id_map   = _lid or {}
-    car, pto, all_locations, region_map = _apply_exclusions(car, pto, loc_region, exclude_jn)
+    car, pto, car_open, pto_open, all_locations, region_map = _apply_exclusions(
+        car, pto, loc_region, exclude_jn, car_open_df=car_open, pto_open_df=pto_open)
 
     car['close_month'] = car['close_date'].dt.to_period('M')
     pto['close_month'] = pto['close_date'].dt.to_period('M')
@@ -535,7 +572,7 @@ def _load_master(source, exclude_jn=False):
     data_end   = (pd.Timestamp.now() if pd.isna(_max_close) else max(_max_close, pd.Timestamp.now())).to_period('M')
     months     = pd.period_range(data_start, data_end, freq='M')
 
-    return car, pto, months, all_locations, region_map, loc_id_map
+    return car, pto, car_open, pto_open, months, all_locations, region_map, loc_id_map
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -692,7 +729,7 @@ def _load_pivot(source, exclude_jn=False):
 # ══════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ══════════════════════════════════════════════════════════════════
-def load_and_compute(file_source, exclude_jn=False) -> dict:
+def load_and_compute(file_source, exclude_jn=False, split_canada=False) -> dict:
     if isinstance(file_source, (str, Path)):
         source      = str(file_source)
         source_name = Path(file_source).name
@@ -704,11 +741,12 @@ def load_and_compute(file_source, exclude_jn=False) -> dict:
     fmt = _detect_format(source)
 
     if fmt == 'master':
-        car, pto, months, all_locations, region_map, loc_id_map = _load_master(source, exclude_jn)
-        car_open, pto_open = None, None
+        car, pto, car_open, pto_open, months, all_locations, region_map, loc_id_map = _load_master(source, exclude_jn)
     else:
         car, pto, car_open, pto_open, months, all_locations, region_map, loc_id_map = _load_pivot(source, exclude_jn)
 
+    if split_canada:
+        region_map = _split_canada_region(region_map, loc_id_map)
     result = _compute_metrics(car, pto, months, all_locations, region_map,
                               car_open=car_open, pto_open=pto_open)
     # Compute init‑2026 metrics (only records initiated in 2026 or later)
@@ -730,6 +768,8 @@ def load_and_compute(file_source, exclude_jn=False) -> dict:
     result['file_path']   = source_name
     result['file_format'] = fmt
     result['exclude_jn']  = exclude_jn
+    result['split_canada'] = split_canada
+    result['loc_id_map'] = loc_id_map
     return result
 
 
@@ -738,13 +778,13 @@ def load_and_compute(file_source, exclude_jn=False) -> dict:
 # Accepts a list of file sources, combines CARs and PTOs across all,
 # then runs the shared metric engine once on the combined dataset.
 # ══════════════════════════════════════════════════════════════════
-def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
+def load_and_compute_multi(file_sources, exclude_jn=False, split_canada=False) -> dict:
     """Load and combine multiple year files, then compute metrics."""
     if not file_sources:
         raise ValueError("No files provided")
 
     if len(file_sources) == 1:
-        return load_and_compute(file_sources[0], exclude_jn=exclude_jn)
+        return load_and_compute(file_sources[0], exclude_jn=exclude_jn, split_canada=split_canada)
 
     all_car, all_pto = [], []
     all_car_open, all_pto_open = [], []
@@ -764,8 +804,7 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
 
         fmt = _detect_format(source)
         if fmt == 'master':
-            car, pto, _, _, _, _lid = _load_master(source, exclude_jn)
-            car_open, pto_open = pd.DataFrame(columns=['loc','init_date']), pd.DataFrame(columns=['loc','init_date'])
+            car, pto, car_open, pto_open, _, _, _, _lid = _load_master(source, exclude_jn)
         else:
             car, pto, car_open, pto_open, _, _, _, _lid = _load_pivot(source, exclude_jn)
 
@@ -822,6 +861,8 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     all_locs_in_source = sorted(k for k in combined_loc_region.keys()
                                 if k not in ('nan', '', 'None'))
     region_map = _build_region_map(all_locs_in_source, combined_loc_region)
+    if split_canada:
+        region_map = _split_canada_region(region_map, combined_loc_id)
 
     valid_locs   = set(l for locs in region_map.values() for l in locs)
     car_combined = car_combined[car_combined['loc'].isin(valid_locs)]
@@ -847,5 +888,6 @@ def load_and_compute_multi(file_sources, exclude_jn=False) -> dict:
     result['file_path']   = ', '.join(source_names)
     result['file_format'] = 'multi'
     result['exclude_jn']  = exclude_jn
+    result['split_canada'] = split_canada
     result['loc_id_map']  = combined_loc_id
     return result
