@@ -339,6 +339,9 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
             # Write a brief description for each column
             explanations = [
                 'Column letters below are the report columns; (T), (A), (B), (C) and (D) are the KPI variables shown in each header.',
+                ('Region grouping: Canada is shown separately from USNE.'
+                 if D.get('split_canada') else
+                 'Region grouping: locations follow the uploaded file.'),
                 '',
                 'A  Region / Location: Name of region or specific location.',
                 'B  Wtd Avg Days to Complete (T): Weighted average days to close, closed records only, for the year-to-date period.',

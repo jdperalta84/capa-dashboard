@@ -50,6 +50,14 @@ Update the file path in the sidebar to point at your Excel file.
 Drop a new Excel export in your mapped `/data` folder, update the filename
 in the sidebar if it changed, then click **⟳ Load / Refresh Data**.
 
+## Separate Canada from USNE
+
+Turn on **Show Canada as a separate region** in the sidebar to move Halifax,
+Hamilton, Levis, Montreal, Newfoundland, and St John from USNE into Canada.
+The region filter, dashboard metrics, location rankings, and regional Excel
+summary all use the selected grouping. Turn it off to use the region assignments
+in the uploaded workbook. The overall NAM totals do not change.
+
 ---
 
 ## Adding / Editing Regions

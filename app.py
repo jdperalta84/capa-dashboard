@@ -437,6 +437,8 @@ with st.sidebar:
 
     st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
     exclude_jn = st.toggle("Exclude JN PTOs", value=True)
+    split_canada = st.toggle("Show Canada as a separate region", value=False,
+                             help="Move the six Canadian locations out of USNE into Canada.")
 
     st.markdown('<div class="sidebar-section">Export</div>', unsafe_allow_html=True)
     export_reg_btn = st.button("↓  Regional Summary (Excel)", use_container_width=True)
@@ -453,21 +455,24 @@ with st.sidebar:
 # LOAD DATA
 # ══════════════════════════════════════════════════════════════════
 @st.cache_data(show_spinner="Computing metrics…")
-def get_data(all_file_bytes, exclude_jn=False):
+def get_data(all_file_bytes, exclude_jn=False, split_canada=False):
     return load_and_compute_multi(
-        [io.BytesIO(b) for b in all_file_bytes], exclude_jn=exclude_jn)
+        [io.BytesIO(b) for b in all_file_bytes], exclude_jn=exclude_jn,
+        split_canada=split_canada)
 
 if uploaded_files:
     all_bytes  = tuple(f.read() for f in uploaded_files)
     file_hash  = hash(all_bytes)
     jn_changed = st.session_state.get("exclude_jn") != exclude_jn
+    canada_changed = st.session_state.get("split_canada") != split_canada
     if ("data" not in st.session_state
             or st.session_state.get("file_hash") != file_hash
-            or load_btn or jn_changed):
-        st.session_state.exclude_jn = exclude_jn
+            or load_btn or jn_changed or canada_changed):
         try:
             get_data.clear()
-            st.session_state.data = get_data(all_bytes, exclude_jn)
+            st.session_state.data = get_data(all_bytes, exclude_jn, split_canada)
+            st.session_state.exclude_jn = exclude_jn
+            st.session_state.split_canada = split_canada
             st.session_state.file_hash = file_hash
             st.session_state.filename = uploaded_files[0].name
         except Exception as e:
@@ -527,7 +532,9 @@ def loc_from_label(label):
             return name
     return label  # fallback
 
-region_options = ['ALL REGIONS'] + [f'[{r}]' for r in REGION_ORDER if r in region_map]
+region_options = ['ALL REGIONS'] + [f'[{r}]' for r in D['region_order']]
+if st.session_state.get('region_sel') not in region_options:
+    st.session_state['region_sel'] = 'ALL REGIONS'
 
 with region_placeholder:
     selected_region = st.selectbox("Region", region_options, key="region_sel",
@@ -543,6 +550,8 @@ else:
 
 # Display labels include "- ID" suffix; data_key uses the plain name
 filtered_loc_labels = [loc_label(l) for l in filtered_locs]
+if st.session_state.get('loc_sel') not in ['ALL'] + filtered_loc_labels:
+    st.session_state['loc_sel'] = 'ALL'
 with location_placeholder:
     selected_loc_label = st.selectbox("Location", ['ALL'] + filtered_loc_labels,
                                       key="loc_sel", label_visibility="collapsed")
