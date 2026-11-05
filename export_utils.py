@@ -122,6 +122,7 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
     from datetime import datetime
     from openpyxl.utils import get_column_letter
     import numpy as np
+    import pandas as pd
 
     if as_of_date is None:
         as_of_date = datetime.now().strftime("%b %d, %Y")
@@ -342,6 +343,8 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 ('Region grouping: Canada is shown separately from USNE.'
                  if D.get('split_canada') else
                  'Region grouping: locations follow the uploaded file.'),
+                f"Detail sheets use the snapshot captured {D['snapshot_at']:%b %d, %Y %I:%M %p}.",
+                'Completed Records supports column D; Open Over 90 Days supports column C. Both include CARs and PTOs.',
                 '',
                 'A  Region / Location: Name of region or specific location.',
                 'B  Wtd Avg Days to Complete (T): Weighted average days to close, closed records only, for the year-to-date period.',
@@ -364,6 +367,100 @@ def export_regional_summary(D: dict, as_of_date: str = None) -> bytes:
                 exp_ws.cell(row=i, column=1).alignment = CL
             exp_ws.column_dimensions['A'].width = 100
 
+    # The summary uses month-end snapshots for prior months and the captured
+    # current timestamp for the latest month. Reuse that precise cutoff here.
+    snapshot = pd.Timestamp(D['snapshot_at'])
+    first_month = pd.Period(datetime.strptime(months[ytd_start], '%b %Y'), freq='M')
+    last_month = pd.Period(datetime.strptime(months[-1], '%b %Y'), freq='M')
+    location_region = {loc: region for region, locations in region_map.items() for loc in locations}
+    details = {'Completed Records': [], 'Open Over 90 Days': []}
+
+    def clean_text(value):
+        if value is None or pd.isna(value):
+            return ''
+        text = str(value).strip()
+        if text.lower() in ('nan', 'nat', 'none'):
+            return ''
+        # Excel must not interpret source descriptions or identifiers as formulas.
+        return "'" + text if text.startswith(('=', '+', '-', '@')) else text
+
+    for kind, (closed, currently_open) in D['record_details'].items():
+        closed_month = closed['close_date'].dt.to_period('M')
+        completed = closed[(closed_month >= first_month) & (closed_month <= last_month)]
+        frames = [frame for frame in (closed, currently_open) if frame is not None and len(frame)]
+        all_records = pd.concat(frames, ignore_index=True) if frames else closed.iloc[0:0]
+        aged = all_records[(all_records['init_date'] <= snapshot - pd.Timedelta(days=91)) &
+                           (all_records['close_date'].isna() | (all_records['close_date'] > snapshot))]
+        for title, frame in (('Completed Records', completed), ('Open Over 90 Days', aged)):
+            for _, rec in frame.iterrows():
+                loc = rec['loc']
+                close_date = rec['close_date']
+                days = (int(rec['days2close']) if title == 'Completed Records'
+                        else (snapshot - rec['init_date']).days)
+                details[title].append({
+                    'kind': kind, 'region': location_region[loc], 'location': loc,
+                    'id': loc_id_map.get(loc, ''), 'number': rec.get('record_num', ''),
+                    'initial': rec['init_date'], 'close': close_date, 'days': days,
+                    'description': rec.get('description', ''), 'initials': rec.get('initials', ''),
+                })
+
+    # Refuse to produce an internally inconsistent report. This checks each
+    # record type and location, including locations with no activity.
+    for kind, key in (('CAR', 'car_metrics'), ('PTO', 'pto_metrics')):
+        for loc in D['all_locations']:
+            metrics = D[key][loc]
+            expected_completed = sum(row['closed'] for row in metrics[ytd_start:])
+            expected_open = metrics[-1]['ov90']
+            actual_completed = sum(r['kind'] == kind and r['location'] == loc for r in details['Completed Records'])
+            actual_open = sum(r['kind'] == kind and r['location'] == loc for r in details['Open Over 90 Days'])
+            if (expected_completed, expected_open) != (actual_completed, actual_open):
+                raise ValueError(f'Detail counts do not match the summary for {kind} at {loc}.')
+
+    for title, records in details.items():
+        ws = wb.create_sheet(title)
+        ws.merge_cells('A1:J1')
+        ws['A1'] = f'{title} — As of {snapshot:%b %d, %Y %I:%M %p}'
+        ws['A1'].font = mfont(bold=True, color='FFFFFF', size=12)
+        ws['A1'].fill = hfill('4A235A')
+        ws['A1'].alignment = CA
+        ws.row_dimensions[1].height = 26
+        ws.merge_cells('A2:J2')
+        ws['A2'] = (f'Completed in {first_month.strftime("%b %Y")} through {last_month.strftime("%b %Y")}; '
+                    'matches column D.' if title == 'Completed Records' else
+                    'Open for more than 90 days at the snapshot time; matches column C.')
+        ws['A2'].font = mfont(size=10)
+        headers = ['Type', 'Region', 'Location', 'Location ID', 'Record number',
+                   'Initiated', 'Completed / effective',
+                   'Days to complete' if title == 'Completed Records' else 'Days open',
+                   'Description', 'QA initials']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(4, col, header)
+            cell.font = mfont(bold=True, color='FFFFFF', size=10)
+            cell.fill = hfill('4A235A')
+            cell.alignment = CA
+            cell.border = mkborder()
+        ws.row_dimensions[4].height = 30
+        records.sort(key=lambda r: (r['region'], r['location'], r['kind'], str(r['number'])))
+        for row_index, rec in enumerate(records, 5):
+            vals = [rec['kind'], rec['region'], rec['location'], rec['id'], rec['number'],
+                    rec['initial'].to_pydatetime(),
+                    rec['close'].to_pydatetime() if pd.notna(rec['close']) else None,
+                    rec['days'], rec['description'], rec['initials']]
+            for col, value in enumerate(vals, 1):
+                cell = ws.cell(row_index, col, clean_text(value) if isinstance(value, str) else value)
+                cell.font = mfont(size=9)
+                cell.alignment = CL if col in (2, 3, 5, 9) else CA
+                cell.fill = hfill('FAFBFC' if row_index % 2 else 'FFFFFF')
+                cell.border = mkborder()
+                if col in (6, 7):
+                    cell.number_format = 'mm/dd/yyyy'
+        for col, width in zip('ABCDEFGHIJ', [10, 20, 36, 13, 23, 16, 21, 18, 65, 13]):
+            ws.column_dimensions[col].width = width
+        ws.freeze_panes = 'A5'
+        ws.auto_filter.ref = f'A4:J{max(4, ws.max_row)}'
+
+    wb.move_sheet(wb['Explanation'], offset=-wb.sheetnames.index('Explanation'))
+    wb.active = 0
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
     return buf.read()
